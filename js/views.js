@@ -4,7 +4,7 @@
  */
 var Views = (function() {
 
-  function dashboard(meters, readings) {
+  function dashboard(meters, readings, categories, expandedCategories) {
     var totalMeters = meters.length;
     var totalReadings = readings.length;
 
@@ -22,31 +22,15 @@ var Views = (function() {
     html += '</button>';
     html += '</div>';
 
-    // Meter summary
+    // Meter groups by category
     if (meters.length > 0) {
-      html += '<section class="dashboard-section">';
-      html += '<h2 class="section-title">Meine Zähler</h2>';
-      html += '<div class="meter-summary-list">';
-      meters.forEach(function(meter) {
-        var last = getLastReading(readings, meter.id);
-        html += '<button class="card card-clickable meter-summary-card" onclick="App.navigate(\'meter-detail\',\'' + meter.id + '\')">';
-        html += '<div class="meter-summary-row">';
-        html += Icons.meterIcon(meter.type);
-        html += '<div class="meter-summary-info">';
-        html += '<div class="meter-summary-name">' + esc(meter.name) + '</div>';
-        html += '<div class="meter-summary-number">' + esc(meter.number) + ' · ' + esc(meter.type) + '</div>';
-        html += '</div>';
-        html += '<div class="meter-summary-value">';
-        if (last) {
-          html += '<span class="summary-val">' + Data.formatNumber(last.value) + '</span>';
-          html += '<span class="summary-unit">' + esc(meter.unit) + '</span>';
-        } else {
-          html += '<span class="summary-none">–</span>';
-        }
-        html += '</div>';
-        html += '</div></button>';
+      var groups = Data.groupMetersByCategory(meters, categories);
+      groups.forEach(function(group) {
+        if (group.meters.length === 0) return;
+        var catId = group.category.id;
+        var isExpanded = expandedCategories && expandedCategories[catId];
+        html += renderCategoryGroup(group, readings, isExpanded, 'dashboard');
       });
-      html += '</div></section>';
     }
 
     // Recent readings
@@ -91,8 +75,53 @@ var Views = (function() {
     return html;
   }
 
-  function meterList(meters, readings) {
-    if (meters.length === 0) {
+  function renderCategoryGroup(group, readings, isExpanded, context) {
+    var catId = group.category.id;
+    var catName = group.category.name;
+    var meterCount = group.meters.length;
+    var chevron = isExpanded ? Icons.chevronDown : Icons.chevronRight;
+
+    var html = '<section class="category-group">';
+    html += '<button class="category-header" onclick="App.toggleCategory(\'' + catId + '\')">';
+    html += '<div class="category-header-left">';
+    html += '<span class="category-chevron' + (isExpanded ? ' category-chevron-open' : '') + '">' + Icons.chevronDown + '</span>';
+    html += '<h2 class="category-header-title">' + esc(catName) + '</h2>';
+    html += '</div>';
+    html += '<span class="category-header-count">' + meterCount + '</span>';
+    html += '</button>';
+
+    html += '<div class="category-content' + (isExpanded ? ' category-content-open' : '') + '">';
+    if (isExpanded) {
+      html += '<div class="meter-summary-list">';
+      group.meters.forEach(function(meter) {
+        var last = getLastReading(readings, meter.id);
+        html += '<button class="card card-clickable meter-summary-card" onclick="App.navigate(\'meter-detail\',\'' + meter.id + '\')">';
+        html += '<div class="meter-summary-row">';
+        html += Icons.meterIcon(meter.type);
+        html += '<div class="meter-summary-info">';
+        html += '<div class="meter-summary-name">' + esc(meter.name) + '</div>';
+        html += '<div class="meter-summary-number">' + esc(meter.number) + ' · ' + esc(meter.type) + '</div>';
+        html += '</div>';
+        html += '<div class="meter-summary-value">';
+        if (last) {
+          html += '<span class="summary-val">' + Data.formatNumber(last.value) + '</span>';
+          html += '<span class="summary-unit">' + esc(meter.unit) + '</span>';
+        } else {
+          html += '<span class="summary-none">–</span>';
+        }
+        html += '</div>';
+        html += '</div></button>';
+      });
+      html += '</div>';
+    }
+    html += '</div>';
+
+    html += '</section>';
+    return html;
+  }
+
+  function meterList(meters, readings, categories, expandedCategories) {
+    if (meters.length === 0 && categories.length === 0) {
       var html = '<div class="view-enter">';
       html += emptyState(Icons.clockSmall, 'Keine Zähler vorhanden', 'Erstellen Sie Ihren ersten Zähler, um Ablesungen zu erfassen.', '+ Zähler anlegen', "App.navigate('add-meter')");
       html += '</div>';
@@ -100,39 +129,86 @@ var Views = (function() {
     }
 
     var html = '<div class="meter-list view-enter">';
-    meters.forEach(function(meter) {
-      var meterReadings = readings.filter(function(r) { return r.meterId === meter.id; });
-      var count = meterReadings.length;
-      var last = getLastReading(readings, meter.id);
 
-      html += '<button class="card card-clickable meter-list-card" onclick="App.navigate(\'meter-detail\',\'' + meter.id + '\')">';
-      html += '<div class="meter-list-row">';
-      html += Icons.meterIcon(meter.type);
-      html += '<div class="meter-list-info">';
-      html += '<div class="meter-list-name">' + esc(meter.name) + '</div>';
-      html += '<div class="meter-list-meta">Nr. ' + esc(meter.number) + ' · ' + esc(meter.type) + ' · ' + count + ' Ablesung' + (count !== 1 ? 'en' : '') + '</div>';
-      html += '</div>';
-      html += '<div class="meter-list-value">';
-      if (last) {
-        html += '<div class="meter-list-val">' + Data.formatNumber(last.value) + '</div>';
-        html += '<div class="meter-list-unit">' + esc(meter.unit) + '</div>';
-      } else {
-        html += '<div class="meter-list-none">–</div>';
-      }
-      html += '</div>';
-      html += '</div></button>';
-    });
+    // Category management button
+    html += '<button class="card card-clickable category-manage-btn" onclick="App.navigate(\'manage-categories\')">';
+    html += '<div class="category-manage-row">';
+    html += '<div class="category-manage-icon">' + Icons.settings + '</div>';
+    html += '<div class="category-manage-text">';
+    html += '<div class="category-manage-title">Kategorien verwalten</div>';
+    html += '<div class="category-manage-subtitle">' + categories.length + ' Kategorie' + (categories.length !== 1 ? 'n' : '') + '</div>';
+    html += '</div>';
+    html += '<span class="category-manage-chevron">' + Icons.chevronRight + '</span>';
+    html += '</div></button>';
+
+    if (meters.length === 0) {
+      html += emptyState(Icons.clockSmall, 'Keine Zähler vorhanden', 'Erstellen Sie Ihren ersten Zähler, um Ablesungen zu erfassen.', '+ Zähler anlegen', "App.navigate('add-meter')");
+    } else {
+      var groups = Data.groupMetersByCategory(meters, categories);
+      groups.forEach(function(group) {
+        if (group.meters.length === 0) return;
+        var catId = group.category.id;
+        var isExpanded = expandedCategories && expandedCategories[catId];
+        html += renderMeterListGroup(group, readings, isExpanded);
+      });
+    }
+
     html += '<button class="fab" onclick="App.navigate(\'add-meter\')" aria-label="Zähler hinzufügen">' + Icons.plus + '</button>';
     html += '</div>';
     return html;
   }
 
-  function meterForm(meter) {
+  function renderMeterListGroup(group, readings, isExpanded) {
+    var catId = group.category.id;
+    var catName = group.category.name;
+    var meterCount = group.meters.length;
+
+    var html = '<section class="category-group">';
+    html += '<button class="category-header" onclick="App.toggleCategory(\'' + catId + '\')">';
+    html += '<div class="category-header-left">';
+    html += '<span class="category-chevron' + (isExpanded ? ' category-chevron-open' : '') + '">' + Icons.chevronDown + '</span>';
+    html += '<h2 class="category-header-title">' + esc(catName) + '</h2>';
+    html += '</div>';
+    html += '<span class="category-header-count">' + meterCount + '</span>';
+    html += '</button>';
+
+    html += '<div class="category-content' + (isExpanded ? ' category-content-open' : '') + '">';
+    if (isExpanded) {
+      group.meters.forEach(function(meter) {
+        var meterReadings = readings.filter(function(r) { return r.meterId === meter.id; });
+        var count = meterReadings.length;
+        var last = getLastReading(readings, meter.id);
+
+        html += '<button class="card card-clickable meter-list-card" onclick="App.navigate(\'meter-detail\',\'' + meter.id + '\')">';
+        html += '<div class="meter-list-row">';
+        html += Icons.meterIcon(meter.type);
+        html += '<div class="meter-list-info">';
+        html += '<div class="meter-list-name">' + esc(meter.name) + '</div>';
+        html += '<div class="meter-list-meta">Nr. ' + esc(meter.number) + ' · ' + esc(meter.type) + ' · ' + count + ' Ablesung' + (count !== 1 ? 'en' : '') + '</div>';
+        html += '</div>';
+        html += '<div class="meter-list-value">';
+        if (last) {
+          html += '<div class="meter-list-val">' + Data.formatNumber(last.value) + '</div>';
+          html += '<div class="meter-list-unit">' + esc(meter.unit) + '</div>';
+        } else {
+          html += '<div class="meter-list-none">–</div>';
+        }
+        html += '</div>';
+        html += '</div></button>';
+      });
+    }
+    html += '</div>';
+    html += '</section>';
+    return html;
+  }
+
+  function meterForm(meter, categories) {
     var isEdit = !!meter;
     var number = isEdit ? meter.number : '';
     var name = isEdit ? meter.name : '';
     var type = isEdit ? meter.type : 'Strom';
     var unit = isEdit ? meter.unit : 'kWh';
+    var categoryId = isEdit ? (meter.categoryId || '') : '';
     var types = ['Strom', 'Kaltwasser', 'Warmwasser', 'Betriebsstunden', 'Wärme'];
 
     var html = '<form class="meter-form view-enter" id="meter-form" onsubmit="App.handleMeterSubmit(event)">';
@@ -157,6 +233,19 @@ var Views = (function() {
       html += '<button type="button" class="type-chip' + (t === type ? ' type-chip-active' : '') + '" data-type="' + t + '" onclick="App.handleTypeChip(this)">' + t + '</button>';
     });
     html += '</div>';
+    html += '</div>';
+
+    // Category dropdown
+    html += '<div class="form-group">';
+    html += '<label class="form-label">Kategorie</label>';
+    html += '<select class="form-input form-select" id="mf-category">';
+    html += '<option value="">Sonstige</option>';
+    var sortedCats = Data.getSortedCategories(categories || []);
+    sortedCats.forEach(function(cat) {
+      html += '<option value="' + cat.id + '"' + (categoryId === cat.id ? ' selected' : '') + '>' + esc(cat.name) + '</option>';
+    });
+    html += '</select>';
+    html += '<span class="form-hint">Ordnen Sie den Zähler einer Kategorie zu</span>';
     html += '</div>';
 
     html += '<div class="form-group">';
@@ -364,13 +453,103 @@ var Views = (function() {
     return html;
   }
 
-  function exportView(meters, readings) {
+  function categoryManagement(categories, meters) {
+    var sorted = Data.getSortedCategories(categories);
+
+    var html = '<div class="category-management view-enter">';
+
+    // Info card
+    html += '<div class="card category-info-card">';
+    html += '<div class="category-info-icon">' + Icons.folderBig + '</div>';
+    html += '<div class="category-info-text">';
+    html += '<h3>Kategorien</h3>';
+    html += '<p>Organisieren Sie Ihre Zähler in Kategorien. Ziehen Sie Kategorien um die Reihenfolge zu ändern.</p>';
+    html += '</div></div>';
+
+    // Add category button
+    html += '<button class="card card-clickable category-add-btn" onclick="App.showCategoryForm()">';
+    html += '<div class="category-add-row">';
+    html += '<div class="category-add-icon">' + Icons.plus + '</div>';
+    html += '<span class="category-add-text">Neue Kategorie</span>';
+    html += '</div></button>';
+
+    // Category form (hidden by default)
+    html += '<div class="category-form-container" id="category-form-container" style="display:none;">';
+    html += '<div class="card category-form-card">';
+    html += '<div class="form-group">';
+    html += '<label class="form-label">Kategoriename *</label>';
+    html += '<input class="form-input" type="text" id="cf-name" placeholder="z.B. Kaltwasser und Warmwasser" autocomplete="off" />';
+    html += '<span class="form-error" id="cf-name-err"></span>';
+    html += '</div>';
+    html += '<div class="form-actions">';
+    html += '<button type="button" class="btn-secondary" onclick="App.hideCategoryForm()">Abbrechen</button>';
+    html += '<button type="button" class="btn-primary" id="cf-submit" onclick="App.handleCategorySubmit()">Erstellen</button>';
+    html += '</div>';
+    html += '</div></div>';
+
+    // Category list
+    if (sorted.length > 0) {
+      html += '<div class="category-list" id="category-list">';
+      sorted.forEach(function(cat, idx) {
+        var catMeters = meters.filter(function(m) { return m.categoryId === cat.id; });
+        html += '<div class="card category-item" data-category-id="' + cat.id + '" draggable="true">';
+        html += '<div class="category-item-row">';
+        html += '<div class="category-drag-handle" aria-label="Reihenfolge ändern">' + Icons.gripVertical + '</div>';
+        html += '<div class="category-item-info">';
+        html += '<div class="category-item-name" id="cat-name-' + cat.id + '">' + esc(cat.name) + '</div>';
+        html += '<div class="category-item-count">' + catMeters.length + ' Zähler</div>';
+        html += '</div>';
+        html += '<div class="category-item-actions">';
+        html += '<button class="category-item-btn" onclick="App.editCategory(\'' + cat.id + '\')" aria-label="Bearbeiten">' + Icons.edit + '</button>';
+        html += '<button class="category-item-btn category-item-btn-danger" onclick="App.confirmDeleteCategory(\'' + cat.id + '\')" aria-label="Löschen">' + Icons.trash + '</button>';
+        html += '</div>';
+        html += '</div>';
+
+        // Inline edit form (hidden)
+        html += '<div class="category-edit-form" id="cat-edit-' + cat.id + '" style="display:none;">';
+        html += '<div class="form-group">';
+        html += '<input class="form-input" type="text" id="cat-edit-input-' + cat.id + '" value="' + escAttr(cat.name) + '" />';
+        html += '<span class="form-error" id="cat-edit-err-' + cat.id + '"></span>';
+        html += '</div>';
+        html += '<div class="form-actions">';
+        html += '<button type="button" class="btn-secondary" onclick="App.cancelEditCategory(\'' + cat.id + '\')">Abbrechen</button>';
+        html += '<button type="button" class="btn-primary" onclick="App.saveEditCategory(\'' + cat.id + '\')">Speichern</button>';
+        html += '</div>';
+        html += '</div>';
+
+        html += '</div>';
+      });
+      html += '</div>';
+    } else {
+      html += '<div class="category-empty">';
+      html += '<p>Noch keine Kategorien erstellt.</p>';
+      html += '<p class="category-empty-hint">Zähler ohne Kategorie erscheinen unter "Sonstige".</p>';
+      html += '</div>';
+    }
+
+    // Sonstige info
+    var uncategorizedMeters = meters.filter(function(m) {
+      return !m.categoryId || !categories.some(function(c) { return c.id === m.categoryId; });
+    });
+    html += '<div class="card category-sonstige-card">';
+    html += '<div class="category-sonstige-row">';
+    html += '<div class="category-sonstige-icon">' + Icons.folder + '</div>';
+    html += '<div class="category-sonstige-info">';
+    html += '<div class="category-sonstige-name">Sonstige</div>';
+    html += '<div class="category-sonstige-desc">' + uncategorizedMeters.length + ' Zähler · System-Kategorie</div>';
+    html += '</div></div></div>';
+
+    html += '</div>';
+    return html;
+  }
+
+  function exportView(meters, readings, categories) {
     var types = ['Strom', 'Kaltwasser', 'Warmwasser', 'Betriebsstunden', 'Wärme'];
     var availableTypes = types.filter(function(t) { return meters.some(function(m) { return m.type === t; }); });
 
     var html = '<div class="export-view view-enter">';
 
-    // ===== CSV EXPORT SECTION =====
+    // CSV EXPORT SECTION
     html += '<div class="card export-info-card">';
     html += '<div class="export-info-icon">' + Icons.downloadBig + '</div>';
     html += '<div class="export-info-text">';
@@ -406,7 +585,6 @@ var Views = (function() {
     html += '<div class="form-group"><label class="form-label">Von</label><input class="form-input" type="date" id="export-from" onchange="App.updateExportCount()" /></div>';
     html += '<div class="form-group"><label class="form-label">Bis</label><input class="form-input" type="date" id="export-to" onchange="App.updateExportCount()" /></div>';
     html += '</div>';
-
     html += '</div>';
 
     // Summary
@@ -426,45 +604,36 @@ var Views = (function() {
     html += '<span>Die CSV-Datei verwendet Semikolon (;) als Trennzeichen und ist für Excel optimiert.</span>';
     html += '</div>';
 
-    // ===== BACKUP SECTION =====
+    // BACKUP SECTION
     html += '<div class="backup-divider">';
     html += '<div class="backup-divider-line"></div>';
     html += '<span class="backup-divider-text">Backup & Wiederherstellung</span>';
     html += '<div class="backup-divider-line"></div>';
     html += '</div>';
 
-    // Backup export info
     html += '<div class="card backup-info-card">';
     html += '<div class="backup-info-icon backup-info-icon-blue">' + Icons.shield + '</div>';
     html += '<div class="backup-info-text">';
     html += '<h3>Komplettes Backup</h3>';
-    html += '<p>Sichern Sie alle Zähler und Ablesungen in einer JSON-Datei. Perfekt zur Datensicherung oder zum Übertragen auf ein anderes Gerät.</p>';
+    html += '<p>Sichern Sie alle Zähler, Kategorien und Ablesungen in einer JSON-Datei.</p>';
     html += '</div></div>';
 
-    // Backup actions
     html += '<div class="backup-actions">';
-
-    // Export backup button
     html += '<button class="backup-btn backup-btn-export" id="backup-export-btn" onclick="App.handleBackupExport()"' + (meters.length === 0 && readings.length === 0 ? ' disabled' : '') + '>';
     html += Icons.download + ' Backup erstellen';
     html += '</button>';
 
-    // Import backup button
     html += '<button class="backup-btn backup-btn-import" id="backup-import-btn" onclick="App.triggerBackupImport()">';
     html += Icons.upload + ' Backup wiederherstellen';
     html += '</button>';
 
-    // Hidden file input
     html += '<input type="file" accept=".json,application/json" class="backup-file-input" id="backup-file-input" onchange="App.handleBackupFileSelect(event)" />';
-
     html += '</div>';
 
-    // Backup summary
     html += '<div class="export-summary">';
-    html += '<span class="export-count">' + meters.length + ' Zähler, ' + readings.length + ' Ablesungen</span>';
+    html += '<span class="export-count">' + (categories || []).length + ' Kategorien, ' + meters.length + ' Zähler, ' + readings.length + ' Ablesungen</span>';
     html += '</div>';
 
-    // Backup hint
     html += '<div class="backup-hint">';
     html += Icons.info;
     html += '<span>Erstellen Sie regelmäßig Backups um Datenverlust zu vermeiden. Die JSON-Datei enthält alle Ihre Daten und kann jederzeit wiederhergestellt werden.</span>';
@@ -508,6 +677,7 @@ var Views = (function() {
     meterDetail: meterDetail,
     readingList: readingList,
     readingForm: readingForm,
+    categoryManagement: categoryManagement,
     exportView: exportView,
     renderReadingItems: renderReadingItems,
     esc: esc

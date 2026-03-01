@@ -7,10 +7,12 @@ var App = (function() {
   // State
   var meters = [];
   var readings = [];
+  var categories = [];
   var currentView = 'dashboard';
   var selectedMeterId = null;
   var editingMeter = null;
   var viewHistory = [];
+  var expandedCategories = {}; // { categoryId: true/false }
 
   // DOM refs
   var mainEl, titleEl, backBtn;
@@ -24,7 +26,8 @@ var App = (function() {
     'add-meter': 'Neuer Zähler',
     'edit-meter': 'Zähler bearbeiten',
     'meter-detail': 'Zählerdetails',
-    'export': 'Export & Backup'
+    'export': 'Export & Backup',
+    'manage-categories': 'Kategorien verwalten'
   };
 
   var mainViews = ['dashboard', 'meters', 'readings', 'export'];
@@ -47,11 +50,22 @@ var App = (function() {
   async function refreshData() {
     meters = await Data.getMeters();
     readings = await Data.getReadings();
+    categories = await Data.getCategories();
   }
 
   // Navigation
   function navigate(view, meterId) {
     if (meterId) selectedMeterId = meterId;
+
+    // When navigating to meter-detail, expand that meter's category
+    if (view === 'meter-detail' && meterId) {
+      var meter = meters.find(function(m) { return m.id === meterId; });
+      if (meter) {
+        var catId = meter.categoryId || '__sonstige__';
+        expandedCategories[catId] = true;
+      }
+    }
+
     if (!mainViews.includes(view) || (mainViews.includes(currentView) && currentView !== view)) {
       viewHistory.push({ view: currentView, meterId: selectedMeterId });
     }
@@ -71,6 +85,12 @@ var App = (function() {
     }
   }
 
+  // Category expand/collapse
+  function toggleCategory(catId) {
+    expandedCategories[catId] = !expandedCategories[catId];
+    render();
+  }
+
   // Render
   function render() {
     var showBack = !mainViews.includes(currentView);
@@ -80,7 +100,7 @@ var App = (function() {
     document.querySelectorAll('.bottom-nav-item').forEach(function(btn) {
       var v = btn.getAttribute('data-view');
       var activeView = currentView;
-      if (['add-meter', 'edit-meter', 'meter-detail'].indexOf(currentView) !== -1) activeView = 'meters';
+      if (['add-meter', 'edit-meter', 'meter-detail', 'manage-categories'].indexOf(currentView) !== -1) activeView = 'meters';
       if (currentView === 'add-reading') activeView = 'readings';
       btn.classList.toggle('active', v === activeView);
     });
@@ -88,16 +108,16 @@ var App = (function() {
     var html = '';
     switch(currentView) {
       case 'dashboard':
-        html = Views.dashboard(meters, readings);
+        html = Views.dashboard(meters, readings, categories, expandedCategories);
         break;
       case 'meters':
-        html = Views.meterList(meters, readings);
+        html = Views.meterList(meters, readings, categories, expandedCategories);
         break;
       case 'add-meter':
-        html = Views.meterForm(null);
+        html = Views.meterForm(null, categories);
         break;
       case 'edit-meter':
-        html = Views.meterForm(editingMeter);
+        html = Views.meterForm(editingMeter, categories);
         break;
       case 'meter-detail':
         var meter = meters.find(function(m) { return m.id === selectedMeterId; });
@@ -110,11 +130,19 @@ var App = (function() {
         html = Views.readingForm(meters, selectedMeterId);
         break;
       case 'export':
-        html = Views.exportView(meters, readings);
+        html = Views.exportView(meters, readings, categories);
+        break;
+      case 'manage-categories':
+        html = Views.categoryManagement(categories, meters);
         break;
     }
     mainEl.innerHTML = html;
     mainEl.scrollTop = 0;
+
+    // Setup drag and drop for categories
+    if (currentView === 'manage-categories') {
+      setupCategoryDragDrop();
+    }
   }
 
   // Bottom Nav
@@ -135,7 +163,6 @@ var App = (function() {
   var toastTimeout = null;
 
   function showToast(message, type) {
-    // Remove existing toast
     var existing = document.querySelector('.toast');
     if (existing) existing.remove();
     if (toastTimeout) clearTimeout(toastTimeout);
@@ -145,7 +172,6 @@ var App = (function() {
     toast.textContent = message;
     document.getElementById('app').appendChild(toast);
 
-    // Trigger animation
     requestAnimationFrame(function() {
       requestAnimationFrame(function() {
         toast.classList.add('toast-visible');
@@ -175,6 +201,7 @@ var App = (function() {
     var numberEl = document.getElementById('mf-number');
     var nameEl = document.getElementById('mf-name');
     var unitEl = document.getElementById('mf-unit');
+    var categoryEl = document.getElementById('mf-category');
     var idEl = document.getElementById('mf-id');
     var activeChip = document.querySelector('.type-chip-active');
     var type = activeChip ? activeChip.getAttribute('data-type') : 'Strom';
@@ -204,6 +231,8 @@ var App = (function() {
     }
     if (!valid) return;
 
+    var categoryId = categoryEl ? categoryEl.value : '';
+
     var submitBtn = document.getElementById('mf-submit');
     submitBtn.disabled = true;
     submitBtn.textContent = 'Speichern...';
@@ -215,6 +244,7 @@ var App = (function() {
           number: numberEl.value.trim(),
           name: nameEl.value.trim(),
           type: type,
+          categoryId: categoryId || null,
           unit: unitEl.value.trim(),
           createdAt: editingMeter.createdAt
         });
@@ -224,6 +254,7 @@ var App = (function() {
           number: numberEl.value.trim(),
           name: nameEl.value.trim(),
           type: type,
+          categoryId: categoryId || null,
           unit: unitEl.value.trim(),
           createdAt: new Date().toISOString()
         });
@@ -392,6 +423,311 @@ var App = (function() {
     });
   }
 
+  // ===== CATEGORY MANAGEMENT =====
+  function showCategoryForm() {
+    var container = document.getElementById('category-form-container');
+    if (container) {
+      container.style.display = 'block';
+      var input = document.getElementById('cf-name');
+      if (input) {
+        input.value = '';
+        input.focus();
+      }
+    }
+  }
+
+  function hideCategoryForm() {
+    var container = document.getElementById('category-form-container');
+    if (container) {
+      container.style.display = 'none';
+    }
+  }
+
+  async function handleCategorySubmit() {
+    var nameEl = document.getElementById('cf-name');
+    var errEl = document.getElementById('cf-name-err');
+    errEl.textContent = '';
+    nameEl.classList.remove('form-input-error');
+
+    if (!nameEl.value.trim()) {
+      errEl.textContent = 'Kategoriename ist erforderlich';
+      nameEl.classList.add('form-input-error');
+      return;
+    }
+
+    // Check for duplicates
+    var name = nameEl.value.trim();
+    var existing = categories.find(function(c) { return c.name.toLowerCase() === name.toLowerCase(); });
+    if (existing) {
+      errEl.textContent = 'Eine Kategorie mit diesem Namen existiert bereits';
+      nameEl.classList.add('form-input-error');
+      return;
+    }
+
+    var newCat = {
+      id: Data.generateId(),
+      name: name,
+      position: categories.length,
+      createdAt: new Date().toISOString()
+    };
+
+    await Data.addCategory(newCat);
+    await refreshData();
+    showToast('Kategorie "' + name + '" erstellt', 'success');
+    render();
+  }
+
+  function editCategory(catId) {
+    // Hide the normal display, show the edit form
+    var editForm = document.getElementById('cat-edit-' + catId);
+    var nameDisplay = document.getElementById('cat-name-' + catId);
+    if (editForm) {
+      editForm.style.display = 'block';
+      var input = document.getElementById('cat-edit-input-' + catId);
+      if (input) input.focus();
+    }
+  }
+
+  function cancelEditCategory(catId) {
+    var editForm = document.getElementById('cat-edit-' + catId);
+    if (editForm) {
+      editForm.style.display = 'none';
+    }
+    // Reset input value
+    var cat = categories.find(function(c) { return c.id === catId; });
+    if (cat) {
+      var input = document.getElementById('cat-edit-input-' + catId);
+      if (input) input.value = cat.name;
+    }
+    var errEl = document.getElementById('cat-edit-err-' + catId);
+    if (errEl) errEl.textContent = '';
+  }
+
+  async function saveEditCategory(catId) {
+    var input = document.getElementById('cat-edit-input-' + catId);
+    var errEl = document.getElementById('cat-edit-err-' + catId);
+    if (!input) return;
+    errEl.textContent = '';
+    input.classList.remove('form-input-error');
+
+    var name = input.value.trim();
+    if (!name) {
+      errEl.textContent = 'Kategoriename ist erforderlich';
+      input.classList.add('form-input-error');
+      return;
+    }
+
+    // Check for duplicates (exclude self)
+    var existing = categories.find(function(c) { return c.id !== catId && c.name.toLowerCase() === name.toLowerCase(); });
+    if (existing) {
+      errEl.textContent = 'Eine Kategorie mit diesem Namen existiert bereits';
+      input.classList.add('form-input-error');
+      return;
+    }
+
+    var cat = categories.find(function(c) { return c.id === catId; });
+    if (cat) {
+      cat.name = name;
+      await Data.updateCategory(cat);
+      await refreshData();
+      showToast('Kategorie umbenannt', 'success');
+      render();
+    }
+  }
+
+  function confirmDeleteCategory(catId) {
+    var cat = categories.find(function(c) { return c.id === catId; });
+    if (!cat) return;
+    var catMeters = meters.filter(function(m) { return m.categoryId === catId; });
+    var msg = 'Die Kategorie "' + cat.name + '" wird gelöscht.';
+    if (catMeters.length > 0) {
+      msg += ' ' + catMeters.length + ' Zähler werden nach "Sonstige" verschoben.';
+    }
+    showDialog(
+      'Kategorie löschen?',
+      msg,
+      'Löschen',
+      async function() {
+        await Data.deleteCategory(catId);
+        await refreshData();
+        showToast('Kategorie gelöscht', 'success');
+        render();
+      }
+    );
+  }
+
+  // ===== DRAG AND DROP FOR CATEGORIES =====
+  var dragSrcEl = null;
+
+  function setupCategoryDragDrop() {
+    var list = document.getElementById('category-list');
+    if (!list) return;
+
+    var items = list.querySelectorAll('.category-item');
+    items.forEach(function(item) {
+      // Touch events for mobile drag & drop
+      var handle = item.querySelector('.category-drag-handle');
+      if (!handle) return;
+
+      // Prevent default touch behavior on handle
+      handle.addEventListener('touchstart', function(e) {
+        e.preventDefault();
+        dragSrcEl = item;
+        item.classList.add('category-item-dragging');
+        item.style.opacity = '0.6';
+      }, { passive: false });
+
+      // Desktop drag events
+      item.addEventListener('dragstart', function(e) {
+        dragSrcEl = item;
+        item.classList.add('category-item-dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', item.getAttribute('data-category-id'));
+        setTimeout(function() {
+          item.style.opacity = '0.4';
+        }, 0);
+      });
+
+      item.addEventListener('dragend', function(e) {
+        item.style.opacity = '1';
+        item.classList.remove('category-item-dragging');
+        document.querySelectorAll('.category-item').forEach(function(el) {
+          el.classList.remove('category-item-over');
+        });
+      });
+
+      item.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        if (item !== dragSrcEl) {
+          item.classList.add('category-item-over');
+        }
+      });
+
+      item.addEventListener('dragleave', function(e) {
+        item.classList.remove('category-item-over');
+      });
+
+      item.addEventListener('drop', function(e) {
+        e.preventDefault();
+        item.classList.remove('category-item-over');
+        if (dragSrcEl && dragSrcEl !== item) {
+          // Reorder in DOM
+          var allItems = Array.from(list.querySelectorAll('.category-item'));
+          var fromIdx = allItems.indexOf(dragSrcEl);
+          var toIdx = allItems.indexOf(item);
+
+          if (fromIdx < toIdx) {
+            item.parentNode.insertBefore(dragSrcEl, item.nextSibling);
+          } else {
+            item.parentNode.insertBefore(dragSrcEl, item);
+          }
+
+          // Save new order
+          saveCategoryOrder();
+        }
+      });
+    });
+
+    // Touch move / end on document for mobile
+    setupTouchDragDrop(list);
+  }
+
+  function setupTouchDragDrop(list) {
+    var touchMoving = false;
+    var touchClone = null;
+    var lastTouchY = 0;
+
+    document.addEventListener('touchmove', function(e) {
+      if (!dragSrcEl) return;
+      e.preventDefault();
+      touchMoving = true;
+
+      var touch = e.touches[0];
+      lastTouchY = touch.clientY;
+
+      // Create visual feedback clone
+      if (!touchClone) {
+        touchClone = dragSrcEl.cloneNode(true);
+        touchClone.className = 'category-item-touch-clone';
+        touchClone.style.cssText = 'position:fixed;z-index:999;pointer-events:none;opacity:0.85;width:' + dragSrcEl.offsetWidth + 'px;box-shadow:0 8px 24px rgba(0,0,0,0.2);border-radius:12px;background:white;';
+        document.body.appendChild(touchClone);
+      }
+
+      touchClone.style.left = touch.clientX - dragSrcEl.offsetWidth / 2 + 'px';
+      touchClone.style.top = touch.clientY - 30 + 'px';
+
+      // Find element under touch
+      if (touchClone) touchClone.style.display = 'none';
+      var elemBelow = document.elementFromPoint(touch.clientX, touch.clientY);
+      if (touchClone) touchClone.style.display = '';
+
+      var targetItem = elemBelow ? elemBelow.closest('.category-item') : null;
+      document.querySelectorAll('.category-item').forEach(function(el) {
+        el.classList.remove('category-item-over');
+      });
+      if (targetItem && targetItem !== dragSrcEl) {
+        targetItem.classList.add('category-item-over');
+      }
+    }, { passive: false });
+
+    document.addEventListener('touchend', function(e) {
+      if (!dragSrcEl) return;
+
+      // Clean up clone
+      if (touchClone) {
+        touchClone.remove();
+        touchClone = null;
+      }
+
+      dragSrcEl.style.opacity = '1';
+      dragSrcEl.classList.remove('category-item-dragging');
+
+      if (touchMoving) {
+        // Find target
+        var elemBelow = document.elementFromPoint(
+          e.changedTouches[0].clientX,
+          e.changedTouches[0].clientY
+        );
+        var targetItem = elemBelow ? elemBelow.closest('.category-item') : null;
+
+        if (targetItem && targetItem !== dragSrcEl && list.contains(targetItem)) {
+          var allItems = Array.from(list.querySelectorAll('.category-item'));
+          var fromIdx = allItems.indexOf(dragSrcEl);
+          var toIdx = allItems.indexOf(targetItem);
+
+          if (fromIdx < toIdx) {
+            targetItem.parentNode.insertBefore(dragSrcEl, targetItem.nextSibling);
+          } else {
+            targetItem.parentNode.insertBefore(dragSrcEl, targetItem);
+          }
+
+          saveCategoryOrder();
+        }
+      }
+
+      document.querySelectorAll('.category-item').forEach(function(el) {
+        el.classList.remove('category-item-over');
+      });
+
+      dragSrcEl = null;
+      touchMoving = false;
+    });
+  }
+
+  async function saveCategoryOrder() {
+    var list = document.getElementById('category-list');
+    if (!list) return;
+    var items = list.querySelectorAll('.category-item');
+    var orderedIds = [];
+    items.forEach(function(item) {
+      orderedIds.push(item.getAttribute('data-category-id'));
+    });
+    await Data.reorderCategories(orderedIds);
+    await refreshData();
+    showToast('Reihenfolge gespeichert', 'success');
+  }
+
   // ===== CSV EXPORT =====
   function getFilteredExportReadings() {
     var meterFilter = document.getElementById('export-meter');
@@ -458,7 +794,7 @@ var App = (function() {
   function handleExport() {
     var filtered = getFilteredExportReadings();
     if (filtered.length === 0) return;
-    var csv = Data.generateCSV(meters, filtered);
+    var csv = Data.generateCSV(meters, filtered, categories);
     var now = new Date();
     var ts = '' + now.getFullYear() + String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0');
     Data.downloadFile(csv, 'zaehlerstaende_' + ts + '.csv', 'text/csv;charset=utf-8');
@@ -476,7 +812,7 @@ var App = (function() {
 
   // ===== JSON BACKUP EXPORT =====
   function handleBackupExport() {
-    var json = Data.generateBackupJSON(meters, readings);
+    var json = Data.generateBackupJSON(meters, readings, categories);
     var now = new Date();
     var ts = '' + now.getFullYear() + String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0');
     Data.downloadFile(json, 'zaehlerstand_backup_' + ts + '.json', 'application/json');
@@ -507,13 +843,11 @@ var App = (function() {
     var file = event.target.files && event.target.files[0];
     if (!file) return;
 
-    // Check file type
     if (!file.name.toLowerCase().endsWith('.json') && file.type !== 'application/json') {
       showImportError('Ungültiges Dateiformat', 'Bitte wählen Sie eine JSON-Datei (.json) aus.');
       return;
     }
 
-    // Check file size (max 10MB)
     if (file.size > 10 * 1024 * 1024) {
       showImportError('Datei zu groß', 'Die Datei darf maximal 10 MB groß sein.');
       return;
@@ -579,6 +913,12 @@ var App = (function() {
 
     // Stats
     html += '<div class="import-preview-stats">';
+    if (result.categoryCount > 0) {
+      html += '<div class="import-preview-stat">';
+      html += '<div class="import-preview-stat-value">' + result.categoryCount + '</div>';
+      html += '<div class="import-preview-stat-label">Kategorien</div>';
+      html += '</div>';
+    }
     html += '<div class="import-preview-stat">';
     html += '<div class="import-preview-stat-value">' + result.meterCount + '</div>';
     html += '<div class="import-preview-stat-label">Zähler</div>';
@@ -589,7 +929,6 @@ var App = (function() {
     html += '</div>';
     html += '</div>';
 
-    // Export date
     if (result.exportDate) {
       html += '<div class="import-preview-date">';
       html += Icons.calendar;
@@ -602,7 +941,6 @@ var App = (function() {
     html += '<div class="import-mode-label">Import-Modus</div>';
     html += '<div class="import-mode-options">';
 
-    // Merge option
     html += '<button class="import-mode-option active" id="import-mode-merge" onclick="App.setImportMode(\'merge\')">';
     html += '<div class="import-mode-radio"><div class="import-mode-radio-inner"></div></div>';
     html += '<div class="import-mode-text">';
@@ -610,7 +948,6 @@ var App = (function() {
     html += '<p class="import-mode-desc">Fügt nur neue Daten hinzu, vorhandene bleiben erhalten.</p>';
     html += '</div></button>';
 
-    // Replace option
     html += '<button class="import-mode-option" id="import-mode-replace" onclick="App.setImportMode(\'replace\')">';
     html += '<div class="import-mode-radio"><div class="import-mode-radio-inner"></div></div>';
     html += '<div class="import-mode-text">';
@@ -620,13 +957,11 @@ var App = (function() {
 
     html += '</div></div>';
 
-    // Warning (hidden initially, shown when replace is selected)
     html += '<div class="import-warning" id="import-replace-warning" style="display:none;">';
     html += Icons.warningIcon;
-    html += '<span>Achtung: Alle aktuellen Daten (' + meters.length + ' Zähler, ' + readings.length + ' Ablesungen) werden unwiderruflich gelöscht!</span>';
+    html += '<span>Achtung: Alle aktuellen Daten (' + categories.length + ' Kategorien, ' + meters.length + ' Zähler, ' + readings.length + ' Ablesungen) werden unwiderruflich gelöscht!</span>';
     html += '</div>';
 
-    // Actions
     html += '<div class="import-preview-actions">';
     html += '<button class="import-preview-btn import-preview-cancel" id="import-preview-cancel">Abbrechen</button>';
     html += '<button class="import-preview-btn import-preview-confirm" id="import-preview-confirm">Importieren</button>';
@@ -689,10 +1024,11 @@ var App = (function() {
         await refreshData();
         render();
         var msg = '';
-        if (result.newMeters === 0 && result.newReadings === 0) {
+        if (result.newMeters === 0 && result.newReadings === 0 && result.newCategories === 0) {
           msg = 'Alle Daten waren bereits vorhanden.';
         } else {
           var parts = [];
+          if (result.newCategories > 0) parts.push(result.newCategories + ' neue Kategorie' + (result.newCategories !== 1 ? 'n' : ''));
           if (result.newMeters > 0) parts.push(result.newMeters + ' neue' + (result.newMeters === 1 ? 'r' : '') + ' Zähler');
           if (result.newReadings > 0) parts.push(result.newReadings + ' neue Ablesung' + (result.newReadings !== 1 ? 'en' : ''));
           msg = parts.join(', ') + ' importiert!';
@@ -752,6 +1088,7 @@ var App = (function() {
   return {
     navigate: navigate,
     goBack: goBack,
+    toggleCategory: toggleCategory,
     handleTypeChip: handleTypeChip,
     handleMeterSubmit: handleMeterSubmit,
     editMeter: editMeter,
@@ -766,6 +1103,13 @@ var App = (function() {
     handleBackupExport: handleBackupExport,
     triggerBackupImport: triggerBackupImport,
     handleBackupFileSelect: handleBackupFileSelect,
-    setImportMode: setImportMode
+    setImportMode: setImportMode,
+    showCategoryForm: showCategoryForm,
+    hideCategoryForm: hideCategoryForm,
+    handleCategorySubmit: handleCategorySubmit,
+    editCategory: editCategory,
+    cancelEditCategory: cancelEditCategory,
+    saveEditCategory: saveEditCategory,
+    confirmDeleteCategory: confirmDeleteCategory
   };
 })();

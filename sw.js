@@ -1,5 +1,5 @@
 
-var CACHE_NAME = 'zaehlerstand-v3';
+var CACHE_NAME = 'zaehlerstand-v4';
 
 var PRECACHE_URLS = [
   './',
