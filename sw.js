@@ -1,5 +1,5 @@
 
-var CACHE_NAME = 'zaehlerstand-v4';
+var CACHE_NAME = 'zaehlerstand-v5';
 
 var PRECACHE_URLS = [
   './',
@@ -9,13 +9,13 @@ var PRECACHE_URLS = [
   './js/storage.js',
   './js/data.js',
   './js/icons.js',
+  './js/charts.js',
   './js/views.js',
   './js/app.js',
   './icons/icon-192.svg',
   './icons/icon-512.svg'
 ];
 
-// Install: Pre-cache resources
 self.addEventListener('install', function(event) {
   event.waitUntil(
     caches.open(CACHE_NAME).then(function(cache) {
@@ -29,7 +29,6 @@ self.addEventListener('install', function(event) {
   );
 });
 
-// Activate: Clean up old caches
 self.addEventListener('activate', function(event) {
   event.waitUntil(
     caches.keys().then(function(cacheNames) {
@@ -46,12 +45,10 @@ self.addEventListener('activate', function(event) {
   );
 });
 
-// Fetch: Network-first for local, cache-first for CDN
 self.addEventListener('fetch', function(event) {
   var request = event.request;
   if (request.method !== 'GET') return;
 
-  // CDN resources: cache-first
   if (request.url.indexOf('fonts.googleapis.com') !== -1 ||
       request.url.indexOf('fonts.gstatic.com') !== -1) {
     event.respondWith(
@@ -73,7 +70,6 @@ self.addEventListener('fetch', function(event) {
     return;
   }
 
-  // Local resources: network-first with cache fallback
   event.respondWith(
     fetch(request).then(function(response) {
       if (response.ok) {

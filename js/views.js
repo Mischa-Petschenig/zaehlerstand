@@ -4,11 +4,22 @@
  */
 var Views = (function() {
 
-  function dashboard(meters, readings, categories, expandedCategories) {
+  function dashboard(meters, readings, categories, expandedCategories, costRates) {
     var totalMeters = meters.length;
     var totalReadings = readings.length;
 
     var html = '<div class="dashboard view-enter">';
+
+    if (meters.length === 0) {
+      html += '<div class="dashboard-empty">';
+      html += '<div class="dashboard-empty-icon">' + Icons.clockBig + '</div>';
+      html += '<h3>Willkommen!</h3>';
+      html += '<p>Erstellen Sie Ihren ersten Zähler, um Ablesungen zu erfassen und den Verbrauch zu analysieren.</p>';
+      html += '<button class="dashboard-start-btn" onclick="App.navigate(\'meters\')">Zähler anlegen</button>';
+      html += '</div>';
+      html += '</div>';
+      return html;
+    }
 
     // Stats
     html += '<div class="stats-grid">';
@@ -22,8 +33,132 @@ var Views = (function() {
     html += '</button>';
     html += '</div>';
 
+    // Quick Actions
+    html += '<div class="quick-actions">';
+    html += '<button class="card card-clickable quick-action-btn" onclick="App.navigate(\'add-reading\')">';
+    html += '<div class="quick-action-icon" style="background:var(--success-light);color:var(--success)">' + Icons.plus + '</div>';
+    html += '<span class="quick-action-label">Ablesung erfassen</span>';
+    html += '</button>';
+    html += '<button class="card card-clickable quick-action-btn" onclick="App.navigate(\'add-meter\')">';
+    html += '<div class="quick-action-icon" style="background:var(--primary-light);color:var(--primary)">' + Icons.zap + '</div>';
+    html += '<span class="quick-action-label">Zähler anlegen</span>';
+    html += '</button>';
+    html += '</div>';
+
+    // Consumption insights
+    var hasInsights = false;
+    meters.forEach(function(meter) {
+      var comp = Charts.getConsumptionComparison(readings, meter.id);
+      if (comp && comp.count >= 2) {
+        if (!hasInsights) {
+          html += '<section class="dashboard-section">';
+          html += '<h2 class="section-title">Verbrauchs-Insights</h2>';
+          hasInsights = true;
+        }
+        var trendIcon, trendClass, trendValueClass;
+        if (comp.trend === 'up') {
+          trendIcon = '<div class="insight-icon insight-icon-up">' + Icons.trendUp + '</div>';
+          trendValueClass = 'insight-value-up';
+        } else if (comp.trend === 'down') {
+          trendIcon = '<div class="insight-icon insight-icon-down">' + Icons.trendDown + '</div>';
+          trendValueClass = 'insight-value-down';
+        } else {
+          trendIcon = '<div class="insight-icon insight-icon-neutral">' + Icons.barChart + '</div>';
+          trendValueClass = 'insight-value-neutral';
+        }
+
+        var changeLabel = '';
+        if (comp.changePct > 0) {
+          changeLabel = '+' + Math.round(comp.changePct) + '% zum Vorperiode';
+        } else if (comp.changePct < 0) {
+          changeLabel = Math.round(comp.changePct) + '% zum Vorperiode';
+        } else {
+          changeLabel = 'Keine Veränderung';
+        }
+
+        html += '<div class="card insight-card">';
+        html += trendIcon;
+        html += '<div class="insight-content">';
+        html += '<div class="insight-title">' + esc(meter.name) + '</div>';
+        html += '<div class="insight-desc">' + changeLabel + '</div>';
+        html += '</div>';
+        html += '<div class="insight-value ' + trendValueClass + '">' + Data.formatNumber(Math.abs(comp.last)) + ' <span style="font-size:12px;font-weight:500">' + esc(meter.unit) + '</span></div>';
+        html += '</div>';
+      }
+    });
+    if (hasInsights) html += '</section>';
+
+    // Consumption chart for first meter with data
+    var chartMeter = null;
+    meters.forEach(function(m) {
+      if (!chartMeter) {
+        var data = Charts.getConsumptionData(readings, m.id, '12m');
+        if (data.length >= 2) chartMeter = m;
+      }
+    });
+
+    if (chartMeter) {
+      html += '<section class="dashboard-section">';
+      html += '<h2 class="section-title">Verbrauch ' + Icons.barChart + '</h2>';
+      html += '<div class="chart-container" id="dashboard-chart">';
+      html += '<div class="chart-header">';
+      html += '<span class="chart-title">' + esc(chartMeter.name) + '</span>';
+      html += '<div class="chart-period-selector">';
+      html += '<button class="chart-period-btn active" data-period="6m" onclick="App.changeDashboardChart(\'' + chartMeter.id + '\', \'6m\', this)">6M</button>';
+      html += '<button class="chart-period-btn" data-period="12m" onclick="App.changeDashboardChart(\'' + chartMeter.id + '\', \'12m\', this)">12M</button>';
+      html += '<button class="chart-period-btn" data-period="all" onclick="App.changeDashboardChart(\'' + chartMeter.id + '\', \'all\', this)">Alle</button>';
+      html += '</div></div>';
+      html += '<div class="chart-canvas" id="dashboard-chart-canvas">';
+      var chartData = Charts.getConsumptionData(readings, chartMeter.id, '6m');
+      html += Charts.renderBarChart(chartData, chartMeter.unit, Icons.getChartColor(chartMeter.type));
+      html += '</div></div>';
+      html += '</section>';
+    }
+
+    // Cost estimate
+    if (readings.length > 0) {
+      var totalMonthlyCost = 0;
+      var hasCostData = false;
+      meters.forEach(function(meter) {
+        var comp = Charts.getConsumptionComparison(readings, meter.id);
+        if (comp && comp.last > 0) {
+          var rate = (costRates && costRates[meter.type]) || Data.defaultCostRates[meter.type] || 0;
+          if (rate > 0) {
+            totalMonthlyCost += comp.last * rate;
+            hasCostData = true;
+          }
+        }
+      });
+
+      if (hasCostData) {
+        html += '<section class="dashboard-section">';
+        html += '<h2 class="section-title">Geschätzte Kosten ' + Icons.euroSign + '</h2>';
+        html += '<div class="card cost-card">';
+        html += '<div class="cost-header">';
+        html += '<span class="cost-title">Letzter Verbrauchszeitraum</span>';
+        html += '<button class="cost-edit-btn" onclick="App.showCostSettings()">Tarife anpassen</button>';
+        html += '</div>';
+        html += '<div class="cost-amount">' + Data.formatCurrency(totalMonthlyCost) + '</div>';
+        html += '<div class="cost-period">basierend auf letzten Ablesungen</div>';
+        html += '<div class="cost-breakdown">';
+        html += '<div class="cost-breakdown-item">';
+        html += '<div class="cost-breakdown-value">' + Data.formatCurrency(totalMonthlyCost * 12) + '</div>';
+        html += '<div class="cost-breakdown-label">Hochrechnung/Jahr</div>';
+        html += '</div>';
+        html += '<div class="cost-breakdown-item">';
+        html += '<div class="cost-breakdown-value">' + Data.formatCurrency(totalMonthlyCost / 30) + '</div>';
+        html += '<div class="cost-breakdown-label">Pro Tag (Ø)</div>';
+        html += '</div>';
+        html += '</div>';
+        html += '</div>';
+        html += '</section>';
+      }
+    }
+
     // Meter groups by category
     if (meters.length > 0) {
+      html += '<section class="dashboard-section">';
+      html += '<h2 class="section-title">Zähler</h2>';
       var groups = Data.groupMetersByCategory(meters, categories);
       groups.forEach(function(group) {
         if (group.meters.length === 0) return;
@@ -31,6 +166,7 @@ var Views = (function() {
         var isExpanded = expandedCategories && expandedCategories[catId];
         html += renderCategoryGroup(group, readings, isExpanded, 'dashboard');
       });
+      html += '</section>';
     }
 
     // Recent readings
@@ -40,7 +176,7 @@ var Views = (function() {
 
     if (recent.length > 0) {
       html += '<section class="dashboard-section">';
-      html += '<h2 class="section-title">Letzte Ablesungen</h2>';
+      html += '<h2 class="section-title">Letzte Ablesungen <span class="section-badge">Neu</span></h2>';
       html += '<div class="recent-list">';
       recent.forEach(function(reading) {
         var meter = meters.find(function(m) { return m.id === reading.meterId; });
@@ -61,16 +197,6 @@ var Views = (function() {
       html += '</div></section>';
     }
 
-    // Empty
-    if (meters.length === 0) {
-      html += '<div class="dashboard-empty">';
-      html += '<div class="dashboard-empty-icon">' + Icons.clockBig + '</div>';
-      html += '<h3>Willkommen!</h3>';
-      html += '<p>Erstellen Sie Ihren ersten Zähler, um Ablesungen zu erfassen.</p>';
-      html += '<button class="dashboard-start-btn" onclick="App.navigate(\'meters\')">Zähler anlegen</button>';
-      html += '</div>';
-    }
-
     html += '</div>';
     return html;
   }
@@ -79,7 +205,6 @@ var Views = (function() {
     var catId = group.category.id;
     var catName = group.category.name;
     var meterCount = group.meters.length;
-    var chevron = isExpanded ? Icons.chevronDown : Icons.chevronRight;
 
     var html = '<section class="category-group">';
     html += '<button class="category-header" onclick="App.toggleCategory(\'' + catId + '\')">';
@@ -106,6 +231,7 @@ var Views = (function() {
         if (last) {
           html += '<span class="summary-val">' + Data.formatNumber(last.value) + '</span>';
           html += '<span class="summary-unit">' + esc(meter.unit) + '</span>';
+          html += '<div style="margin-top:4px">' + Charts.renderSparkline(readings, meter.id, 56, 20) + '</div>';
         } else {
           html += '<span class="summary-none">–</span>';
         }
@@ -115,12 +241,11 @@ var Views = (function() {
       html += '</div>';
     }
     html += '</div>';
-
     html += '</section>';
     return html;
   }
 
-  function meterList(meters, readings, categories, expandedCategories) {
+  function meterList(meters, readings, categories, expandedCategories, searchQuery) {
     if (meters.length === 0 && categories.length === 0) {
       var html = '<div class="view-enter">';
       html += emptyState(Icons.clockSmall, 'Keine Zähler vorhanden', 'Erstellen Sie Ihren ersten Zähler, um Ablesungen zu erfassen.', '+ Zähler anlegen', "App.navigate('add-meter')");
@@ -129,6 +254,15 @@ var Views = (function() {
     }
 
     var html = '<div class="meter-list view-enter">';
+
+    // Search bar
+    if (meters.length > 2) {
+      html += '<div class="search-bar">';
+      html += '<span class="search-icon">' + Icons.search + '</span>';
+      html += '<input class="search-input" type="text" id="meter-search" placeholder="Zähler suchen..." value="' + escAttr(searchQuery || '') + '" oninput="App.handleMeterSearch(this.value)" autocomplete="off" />';
+      html += '<button class="search-clear' + (searchQuery ? ' visible' : '') + '" id="meter-search-clear" onclick="App.clearMeterSearch()">' + Icons.closeX + '</button>';
+      html += '</div>';
+    }
 
     // Category management button
     html += '<button class="card card-clickable category-manage-btn" onclick="App.navigate(\'manage-categories\')">';
@@ -141,14 +275,29 @@ var Views = (function() {
     html += '<span class="category-manage-chevron">' + Icons.chevronRight + '</span>';
     html += '</div></button>';
 
-    if (meters.length === 0) {
-      html += emptyState(Icons.clockSmall, 'Keine Zähler vorhanden', 'Erstellen Sie Ihren ersten Zähler, um Ablesungen zu erfassen.', '+ Zähler anlegen', "App.navigate('add-meter')");
+    // Filter meters by search
+    var filteredMeters = meters;
+    if (searchQuery) {
+      var q = searchQuery.toLowerCase();
+      filteredMeters = meters.filter(function(m) {
+        return m.name.toLowerCase().indexOf(q) !== -1 ||
+               m.number.toLowerCase().indexOf(q) !== -1 ||
+               m.type.toLowerCase().indexOf(q) !== -1;
+      });
+    }
+
+    if (filteredMeters.length === 0 && searchQuery) {
+      html += '<div class="reading-filter-empty">Keine Zähler für "' + esc(searchQuery) + '" gefunden.</div>';
+    } else if (filteredMeters.length === 0) {
+      html += emptyState(Icons.clockSmall, 'Keine Zähler vorhanden', 'Erstellen Sie Ihren ersten Zähler.', '+ Zähler anlegen', "App.navigate('add-meter')");
     } else {
-      var groups = Data.groupMetersByCategory(meters, categories);
+      var groups = Data.groupMetersByCategory(filteredMeters, categories);
       groups.forEach(function(group) {
         if (group.meters.length === 0) return;
         var catId = group.category.id;
         var isExpanded = expandedCategories && expandedCategories[catId];
+        // Auto-expand when searching
+        if (searchQuery) isExpanded = true;
         html += renderMeterListGroup(group, readings, isExpanded);
       });
     }
@@ -235,7 +384,6 @@ var Views = (function() {
     html += '</div>';
     html += '</div>';
 
-    // Category dropdown
     html += '<div class="form-group">';
     html += '<label class="form-label">Kategorie</label>';
     html += '<select class="form-input form-select" id="mf-category">';
@@ -267,7 +415,7 @@ var Views = (function() {
     return html;
   }
 
-  function meterDetail(meter, readings) {
+  function meterDetail(meter, readings, costRates) {
     if (!meter) {
       return '<div class="detail-error view-enter">Zähler nicht gefunden.</div>';
     }
@@ -293,10 +441,70 @@ var Views = (function() {
 
     // Stats
     if (meterReadings.length > 0) {
+      var totalConsumption = Charts.getTotalConsumption(readings, meter.id);
       html += '<div class="detail-stats">';
       html += '<div class="detail-stat"><span class="detail-stat-value">' + Data.formatNumber(meterReadings[0].value) + '</span><span class="detail-stat-label">Letzter Stand (' + esc(meter.unit) + ')</span></div>';
       html += '<div class="detail-stat"><span class="detail-stat-value">' + meterReadings.length + '</span><span class="detail-stat-label">Ablesungen</span></div>';
+      if (totalConsumption > 0) {
+        html += '<div class="detail-stat"><span class="detail-stat-value">' + Data.formatNumber(totalConsumption) + '</span><span class="detail-stat-label">Gesamtverbrauch (' + esc(meter.unit) + ')</span></div>';
+        var rate = (costRates && costRates[meter.type]) || Data.defaultCostRates[meter.type] || 0;
+        if (rate > 0) {
+          html += '<div class="detail-stat"><span class="detail-stat-value">' + Data.formatCurrency(totalConsumption * rate) + '</span><span class="detail-stat-label">Geschätzte Kosten</span></div>';
+        }
+      }
       html += '</div>';
+    }
+
+    // Consumption chart
+    if (meterReadings.length >= 2) {
+      html += '<div class="chart-container" id="detail-chart">';
+      html += '<div class="chart-header">';
+      html += '<span class="chart-title">Verbrauch</span>';
+      html += '<div class="chart-period-selector">';
+      html += '<button class="chart-period-btn active" onclick="App.changeDetailChart(\'' + meter.id + '\', \'6m\', this)">6M</button>';
+      html += '<button class="chart-period-btn" onclick="App.changeDetailChart(\'' + meter.id + '\', \'12m\', this)">12M</button>';
+      html += '<button class="chart-period-btn" onclick="App.changeDetailChart(\'' + meter.id + '\', \'all\', this)">Alle</button>';
+      html += '</div></div>';
+      html += '<div class="chart-canvas" id="detail-chart-canvas">';
+      var chartData = Charts.getConsumptionData(readings, meter.id, '6m');
+      html += Charts.renderBarChart(chartData, meter.unit, Icons.getChartColor(meter.type));
+      html += '</div>';
+      html += '</div>';
+
+      // Meter value line chart
+      html += '<div class="chart-container">';
+      html += '<div class="chart-header">';
+      html += '<span class="chart-title">Zählerstandverlauf</span>';
+      html += '</div>';
+      html += '<div class="chart-canvas">';
+      html += Charts.renderLineChart(Charts.getConsumptionData(readings, meter.id, '12m'), meter.unit, Icons.getChartColor(meter.type));
+      html += '</div>';
+      html += '</div>';
+
+      // Consumption comparison insight
+      var comp = Charts.getConsumptionComparison(readings, meter.id);
+      if (comp && comp.count >= 2) {
+        var trendIcon, trendClass;
+        if (comp.trend === 'up') {
+          trendIcon = '<div class="insight-icon insight-icon-up">' + Icons.trendUp + '</div>';
+        } else if (comp.trend === 'down') {
+          trendIcon = '<div class="insight-icon insight-icon-down">' + Icons.trendDown + '</div>';
+        } else {
+          trendIcon = '<div class="insight-icon insight-icon-neutral">' + Icons.barChart + '</div>';
+        }
+
+        html += '<div class="card insight-card">';
+        html += trendIcon;
+        html += '<div class="insight-content">';
+        html += '<div class="insight-title">Verbrauchsanalyse</div>';
+        var desc = 'Ø ' + Data.formatNumber(comp.average) + ' ' + esc(meter.unit) + ' pro Periode';
+        if (comp.changePct !== 0) {
+          desc += ' · ' + (comp.changePct > 0 ? '+' : '') + Math.round(comp.changePct) + '% vs. Vorperiode';
+        }
+        html += '<div class="insight-desc">' + desc + '</div>';
+        html += '</div>';
+        html += '</div>';
+      }
     }
 
     // Section header
@@ -408,7 +616,7 @@ var Views = (function() {
     return html;
   }
 
-  function readingForm(meters, preselectedMeterId) {
+  function readingForm(meters, preselectedMeterId, readings) {
     var meterId = preselectedMeterId || (meters.length === 1 ? meters[0].id : '');
     var today = new Date().toISOString().split('T')[0];
     var selectedMeter = meters.find(function(m) { return m.id === meterId; });
@@ -426,6 +634,17 @@ var Views = (function() {
     html += '<span class="form-error" id="rf-meter-err"></span>';
     html += '</div>';
 
+    // Show last reading hint
+    if (selectedMeter && readings) {
+      var lastReading = getLastReading(readings, selectedMeter.id);
+      if (lastReading) {
+        html += '<div class="last-reading-hint" id="rf-last-reading">';
+        html += '<span class="last-reading-hint-icon">' + Icons.info + '</span>';
+        html += '<span>Letzter Stand: <span class="last-reading-hint-value">' + Data.formatNumber(lastReading.value) + ' ' + esc(selectedMeter.unit) + '</span> am ' + Data.formatDate(lastReading.date) + '</span>';
+        html += '</div>';
+      }
+    }
+
     html += '<div class="form-group">';
     html += '<label class="form-label" id="rf-value-label">Zählerstand' + (selectedMeter ? ' (' + esc(selectedMeter.unit) + ')' : '') + ' *</label>';
     html += '<input class="form-input form-input-large" type="text" inputmode="decimal" id="rf-value" placeholder="z.B. 12345,67" autocomplete="off"' + (meterId ? ' autofocus' : '') + ' />';
@@ -441,7 +660,7 @@ var Views = (function() {
 
     html += '<div class="form-group">';
     html += '<label class="form-label">Notiz (optional)</label>';
-    html += '<input class="form-input" type="text" id="rf-note" placeholder="z.B. Jahresablesung" />';
+    html += '<input class="form-input" type="text" id="rf-note" placeholder="z.B. Jahresablesung, Zwischenablesung" />';
     html += '</div>';
 
     html += '<div class="form-actions">';
@@ -458,7 +677,6 @@ var Views = (function() {
 
     var html = '<div class="category-management view-enter">';
 
-    // Info card
     html += '<div class="card category-info-card">';
     html += '<div class="category-info-icon">' + Icons.folderBig + '</div>';
     html += '<div class="category-info-text">';
@@ -466,14 +684,12 @@ var Views = (function() {
     html += '<p>Organisieren Sie Ihre Zähler in Kategorien. Ziehen Sie Kategorien um die Reihenfolge zu ändern.</p>';
     html += '</div></div>';
 
-    // Add category button
     html += '<button class="card card-clickable category-add-btn" onclick="App.showCategoryForm()">';
     html += '<div class="category-add-row">';
     html += '<div class="category-add-icon">' + Icons.plus + '</div>';
     html += '<span class="category-add-text">Neue Kategorie</span>';
     html += '</div></button>';
 
-    // Category form (hidden by default)
     html += '<div class="category-form-container" id="category-form-container" style="display:none;">';
     html += '<div class="card category-form-card">';
     html += '<div class="form-group">';
@@ -487,10 +703,9 @@ var Views = (function() {
     html += '</div>';
     html += '</div></div>';
 
-    // Category list
     if (sorted.length > 0) {
       html += '<div class="category-list" id="category-list">';
-      sorted.forEach(function(cat, idx) {
+      sorted.forEach(function(cat) {
         var catMeters = meters.filter(function(m) { return m.categoryId === cat.id; });
         html += '<div class="card category-item" data-category-id="' + cat.id + '" draggable="true">';
         html += '<div class="category-item-row">';
@@ -505,7 +720,6 @@ var Views = (function() {
         html += '</div>';
         html += '</div>';
 
-        // Inline edit form (hidden)
         html += '<div class="category-edit-form" id="cat-edit-' + cat.id + '" style="display:none;">';
         html += '<div class="form-group">';
         html += '<input class="form-input" type="text" id="cat-edit-input-' + cat.id + '" value="' + escAttr(cat.name) + '" />';
@@ -527,7 +741,6 @@ var Views = (function() {
       html += '</div>';
     }
 
-    // Sonstige info
     var uncategorizedMeters = meters.filter(function(m) {
       return !m.categoryId || !categories.some(function(c) { return c.id === m.categoryId; });
     });
@@ -549,7 +762,6 @@ var Views = (function() {
 
     var html = '<div class="export-view view-enter">';
 
-    // CSV EXPORT SECTION
     html += '<div class="card export-info-card">';
     html += '<div class="export-info-icon">' + Icons.downloadBig + '</div>';
     html += '<div class="export-info-text">';
@@ -557,7 +769,6 @@ var Views = (function() {
     html += '<p>Exportieren Sie Ihre Zählerstände als CSV-Datei für Excel und andere Tabellenkalkulationen.</p>';
     html += '</div></div>';
 
-    // Filters
     html += '<div class="export-filters">';
     html += '<h3 class="export-section-title">Filter (optional)</h3>';
 
@@ -587,24 +798,20 @@ var Views = (function() {
     html += '</div>';
     html += '</div>';
 
-    // Summary
     html += '<div class="export-summary">';
     html += '<span class="export-count" id="export-count">' + readings.length + ' Ablesung' + (readings.length !== 1 ? 'en' : '') + '</span>';
     html += '<button class="export-reset" id="export-reset" onclick="App.resetExportFilters()" style="display:none;">Filter zurücksetzen</button>';
     html += '</div>';
 
-    // Export button
     html += '<button class="export-btn" id="export-btn" onclick="App.handleExport()"' + (readings.length === 0 ? ' disabled' : '') + '>';
     html += Icons.download + ' Als CSV exportieren';
     html += '</button>';
 
-    // Hint
     html += '<div class="export-hint">';
     html += Icons.info;
     html += '<span>Die CSV-Datei verwendet Semikolon (;) als Trennzeichen und ist für Excel optimiert.</span>';
     html += '</div>';
 
-    // BACKUP SECTION
     html += '<div class="backup-divider">';
     html += '<div class="backup-divider-line"></div>';
     html += '<span class="backup-divider-text">Backup & Wiederherstellung</span>';
@@ -636,10 +843,39 @@ var Views = (function() {
 
     html += '<div class="backup-hint">';
     html += Icons.info;
-    html += '<span>Erstellen Sie regelmäßig Backups um Datenverlust zu vermeiden. Die JSON-Datei enthält alle Ihre Daten und kann jederzeit wiederhergestellt werden.</span>';
+    html += '<span>Erstellen Sie regelmäßig Backups um Datenverlust zu vermeiden.</span>';
     html += '</div>';
 
     html += '</div>';
+    return html;
+  }
+
+  // Cost settings bottom sheet
+  function costSettingsSheet(costRates, meterTypes) {
+    var html = '<div class="cost-form-overlay" id="cost-form-overlay" onclick="if(event.target===this)App.hideCostSettings()">';
+    html += '<div class="cost-form-sheet" onclick="event.stopPropagation()">';
+    html += '<div class="cost-form-handle"></div>';
+    html += '<h3 class="cost-form-title">Tarife konfigurieren</h3>';
+    html += '<div class="cost-form-grid">';
+
+    meterTypes.forEach(function(type) {
+      var rate = (costRates && costRates[type]) || Data.defaultCostRates[type] || 0;
+      var costUnit = Data.costUnits[type] || '€/Einheit';
+      html += '<div class="cost-input-row">';
+      html += '<div class="form-group">';
+      html += '<label class="form-label">' + esc(type) + '</label>';
+      html += '<input class="form-input" type="text" inputmode="decimal" id="cost-rate-' + type.replace(/\s/g, '') + '" value="' + rate.toString().replace('.', ',') + '" />';
+      html += '</div>';
+      html += '<span class="cost-input-suffix">' + costUnit + '</span>';
+      html += '</div>';
+    });
+
+    html += '</div>';
+    html += '<div class="form-actions" style="margin-top:16px;">';
+    html += '<button type="button" class="btn-secondary" onclick="App.hideCostSettings()">Abbrechen</button>';
+    html += '<button type="button" class="btn-primary" onclick="App.saveCostSettings()">Speichern</button>';
+    html += '</div>';
+    html += '</div></div>';
     return html;
   }
 
@@ -679,6 +915,7 @@ var Views = (function() {
     readingForm: readingForm,
     categoryManagement: categoryManagement,
     exportView: exportView,
+    costSettingsSheet: costSettingsSheet,
     renderReadingItems: renderReadingItems,
     esc: esc
   };

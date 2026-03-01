@@ -1,12 +1,13 @@
 
 /**
- * Data layer – CRUD operations for meters, readings, and categories.
+ * Data layer – CRUD operations for meters, readings, categories, and settings.
  * All functions return Promises.
  */
 var Data = (function() {
   var METERS_KEY = 'meters_db';
   var READINGS_KEY = 'readings_db';
   var CATEGORIES_KEY = 'categories_db';
+  var SETTINGS_KEY = 'settings_db';
 
   function generateId() {
     return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
@@ -32,6 +33,33 @@ var Data = (function() {
 
   function formatNumber(num) {
     return num.toLocaleString('de-DE', { minimumFractionDigits: 0, maximumFractionDigits: 3 });
+  }
+
+  function formatCurrency(num) {
+    return num.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+  }
+
+  // ===== SETTINGS =====
+  async function getSettings() {
+    var data = await Storage.getItem(SETTINGS_KEY);
+    if (!data) return {};
+    try { return JSON.parse(data); } catch(e) { return {}; }
+  }
+
+  async function saveSettings(settings) {
+    await Storage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  }
+
+  async function getCostRates() {
+    var settings = await getSettings();
+    return settings.costRates || {};
+  }
+
+  async function saveCostRate(meterType, rate) {
+    var settings = await getSettings();
+    if (!settings.costRates) settings.costRates = {};
+    settings.costRates[meterType] = rate;
+    await saveSettings(settings);
   }
 
   // ===== CATEGORIES =====
@@ -64,7 +92,6 @@ var Data = (function() {
     var categories = await getCategories();
     categories = categories.filter(function(c) { return c.id !== id; });
     await saveCategories(categories);
-    // Move meters in this category to "Sonstige" (categoryId = null)
     var meters = await getMeters();
     var changed = false;
     meters.forEach(function(m) {
@@ -89,7 +116,6 @@ var Data = (function() {
         reordered.push(catMap[id]);
       }
     });
-    // Add any categories not in orderedIds (shouldn't happen, but safe)
     categories.forEach(function(c) {
       if (orderedIds.indexOf(c.id) === -1) {
         c.position = reordered.length;
@@ -143,7 +169,6 @@ var Data = (function() {
     await saveReadings(readings);
   }
 
-  // Group meters by category
   function groupMetersByCategory(meters, categories) {
     var sorted = getSortedCategories(categories);
     var groups = [];
@@ -158,7 +183,6 @@ var Data = (function() {
       });
     });
 
-    // "Sonstige" – meters without category or with null/undefined categoryId
     var uncategorized = meters.filter(function(m) { return !assignedMeterIds[m.id]; });
     if (uncategorized.length > 0 || groups.length === 0) {
       groups.push({
@@ -230,7 +254,6 @@ var Data = (function() {
     return '\uFEFF' + lines.join('\r\n');
   }
 
-  // JSON Backup Export
   function generateBackupJSON(meters, readings, categories) {
     var backup = {
       appVersion: '2.0',
@@ -242,7 +265,6 @@ var Data = (function() {
     return JSON.stringify(backup, null, 2);
   }
 
-  // JSON Backup Import – Validation
   function validateBackup(jsonString) {
     var data;
     try {
@@ -263,7 +285,6 @@ var Data = (function() {
       return { valid: false, error: 'Die Backup-Datei enthält keine Ablesungs-Daten (readings Array fehlt).' };
     }
 
-    // Categories array is optional for backward compat
     if (data.categories && !Array.isArray(data.categories)) {
       return { valid: false, error: 'Die Backup-Datei enthält ungültige Kategorie-Daten.' };
     }
@@ -295,7 +316,6 @@ var Data = (function() {
     };
   }
 
-  // Import – Replace mode
   async function importReplace(backupData) {
     await saveMeters(backupData.meters);
     await saveReadings(backupData.readings);
@@ -306,7 +326,6 @@ var Data = (function() {
     }
   }
 
-  // Import – Merge mode
   async function importMerge(backupData) {
     var existingMeters = await getMeters();
     var existingReadings = await getReadings();
@@ -314,10 +333,8 @@ var Data = (function() {
 
     var existingMeterIds = {};
     existingMeters.forEach(function(m) { existingMeterIds[m.id] = true; });
-
     var existingReadingIds = {};
     existingReadings.forEach(function(r) { existingReadingIds[r.id] = true; });
-
     var existingCategoryIds = {};
     existingCategories.forEach(function(c) { existingCategoryIds[c.id] = true; });
 
@@ -325,7 +342,6 @@ var Data = (function() {
     var newReadings = 0;
     var newCategories = 0;
 
-    // Merge categories first
     if (backupData.categories) {
       backupData.categories.forEach(function(c) {
         if (!existingCategoryIds[c.id]) {
@@ -379,11 +395,32 @@ var Data = (function() {
     'Wärme': 'MWh'
   };
 
+  var defaultCostRates = {
+    'Strom': 0.35,
+    'Kaltwasser': 4.50,
+    'Warmwasser': 9.80,
+    'Wärme': 120.00,
+    'Betriebsstunden': 0
+  };
+
+  var costUnits = {
+    'Strom': '€/kWh',
+    'Kaltwasser': '€/m³',
+    'Warmwasser': '€/m³',
+    'Wärme': '€/MWh',
+    'Betriebsstunden': '€/h'
+  };
+
   return {
     generateId: generateId,
     formatDate: formatDate,
     formatDateTime: formatDateTime,
     formatNumber: formatNumber,
+    formatCurrency: formatCurrency,
+    getSettings: getSettings,
+    saveSettings: saveSettings,
+    getCostRates: getCostRates,
+    saveCostRate: saveCostRate,
     getCategories: getCategories,
     saveCategories: saveCategories,
     addCategory: addCategory,
@@ -407,6 +444,8 @@ var Data = (function() {
     importReplace: importReplace,
     importMerge: importMerge,
     downloadFile: downloadFile,
-    unitSuggestions: unitSuggestions
+    unitSuggestions: unitSuggestions,
+    defaultCostRates: defaultCostRates,
+    costUnits: costUnits
   };
 })();
