@@ -4,7 +4,7 @@
  */
 var Views = (function() {
 
-  function dashboard(meters, readings, categories, expandedCategories, costRates) {
+  function dashboard(meters, readings, categories, expandedCategories, costRates, reminderInterval) {
     var totalMeters = meters.length;
     var totalReadings = readings.length;
 
@@ -19,6 +19,22 @@ var Views = (function() {
       html += '</div>';
       html += '</div>';
       return html;
+    }
+
+    // Reminder card for overdue meters
+    var interval = reminderInterval || 30;
+    var overdueMeters = Data.getOverdueMeters(meters, readings, interval);
+    if (overdueMeters.length > 0) {
+      var overdueNames = overdueMeters.slice(0, 3).map(function(o) { return o.meter.name; }).join(', ');
+      if (overdueMeters.length > 3) overdueNames += ' +' + (overdueMeters.length - 3);
+      html += '<div class="card reminder-card">';
+      html += '<div class="reminder-icon">' + Icons.bell + '</div>';
+      html += '<div class="reminder-content">';
+      html += '<div class="reminder-title">Ablesung fällig</div>';
+      html += '<div class="reminder-desc">' + overdueMeters.length + ' Zähler seit mehr als ' + interval + ' Tagen nicht abgelesen: ' + esc(overdueNames) + '</div>';
+      html += '</div>';
+      html += '<button class="reminder-action" onclick="App.navigate(\'add-reading\')">Ablesen</button>';
+      html += '</div>';
     }
 
     // Stats
@@ -39,9 +55,9 @@ var Views = (function() {
     html += '<div class="quick-action-icon" style="background:var(--success-light);color:var(--success)">' + Icons.plus + '</div>';
     html += '<span class="quick-action-label">Ablesung erfassen</span>';
     html += '</button>';
-    html += '<button class="card card-clickable quick-action-btn" onclick="App.navigate(\'add-meter\')">';
-    html += '<div class="quick-action-icon" style="background:var(--primary-light);color:var(--primary)">' + Icons.zap + '</div>';
-    html += '<span class="quick-action-label">Zähler anlegen</span>';
+    html += '<button class="card card-clickable quick-action-btn" onclick="App.navigate(\'report\')">';
+    html += '<div class="quick-action-icon" style="background:var(--primary-light);color:var(--primary)">' + Icons.pieChart + '</div>';
+    html += '<span class="quick-action-label">Bericht anzeigen</span>';
     html += '</button>';
     html += '</div>';
 
@@ -55,7 +71,7 @@ var Views = (function() {
           html += '<h2 class="section-title">Verbrauchs-Insights</h2>';
           hasInsights = true;
         }
-        var trendIcon, trendClass, trendValueClass;
+        var trendIcon, trendValueClass;
         if (comp.trend === 'up') {
           trendIcon = '<div class="insight-icon insight-icon-up">' + Icons.trendUp + '</div>';
           trendValueClass = 'insight-value-up';
@@ -171,7 +187,7 @@ var Views = (function() {
 
     // Recent readings
     var recent = readings.slice().sort(function(a, b) {
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      return new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime();
     }).slice(0, 5);
 
     if (recent.length > 0) {
@@ -247,15 +263,14 @@ var Views = (function() {
 
   function meterList(meters, readings, categories, expandedCategories, searchQuery) {
     if (meters.length === 0 && categories.length === 0) {
-      var html = '<div class="view-enter">';
-      html += emptyState(Icons.clockSmall, 'Keine Zähler vorhanden', 'Erstellen Sie Ihren ersten Zähler, um Ablesungen zu erfassen.', '+ Zähler anlegen', "App.navigate('add-meter')");
-      html += '</div>';
-      return html;
+      var h = '<div class="view-enter">';
+      h += emptyState(Icons.clockSmall, 'Keine Zähler vorhanden', 'Erstellen Sie Ihren ersten Zähler, um Ablesungen zu erfassen.', '+ Zähler anlegen', "App.navigate('add-meter')");
+      h += '</div>';
+      return h;
     }
 
     var html = '<div class="meter-list view-enter">';
 
-    // Search bar
     if (meters.length > 2) {
       html += '<div class="search-bar">';
       html += '<span class="search-icon">' + Icons.search + '</span>';
@@ -264,7 +279,6 @@ var Views = (function() {
       html += '</div>';
     }
 
-    // Category management button
     html += '<button class="card card-clickable category-manage-btn" onclick="App.navigate(\'manage-categories\')">';
     html += '<div class="category-manage-row">';
     html += '<div class="category-manage-icon">' + Icons.settings + '</div>';
@@ -275,7 +289,6 @@ var Views = (function() {
     html += '<span class="category-manage-chevron">' + Icons.chevronRight + '</span>';
     html += '</div></button>';
 
-    // Filter meters by search
     var filteredMeters = meters;
     if (searchQuery) {
       var q = searchQuery.toLowerCase();
@@ -296,7 +309,6 @@ var Views = (function() {
         if (group.meters.length === 0) return;
         var catId = group.category.id;
         var isExpanded = expandedCategories && expandedCategories[catId];
-        // Auto-expand when searching
         if (searchQuery) isExpanded = true;
         html += renderMeterListGroup(group, readings, isExpanded);
       });
@@ -393,7 +405,6 @@ var Views = (function() {
       html += '<option value="' + cat.id + '"' + (categoryId === cat.id ? ' selected' : '') + '>' + esc(cat.name) + '</option>';
     });
     html += '</select>';
-    html += '<span class="form-hint">Ordnen Sie den Zähler einer Kategorie zu</span>';
     html += '</div>';
 
     html += '<div class="form-group">';
@@ -425,7 +436,6 @@ var Views = (function() {
 
     var html = '<div class="meter-detail view-enter">';
 
-    // Header card
     html += '<div class="card detail-header-card">';
     html += '<div class="detail-header">';
     html += Icons.meterIcon(meter.type);
@@ -439,7 +449,6 @@ var Views = (function() {
     html += '<button class="detail-action-btn detail-action-danger" onclick="App.confirmDeleteMeter(\'' + meter.id + '\')">' + Icons.trash + ' Löschen</button>';
     html += '</div></div>';
 
-    // Stats
     if (meterReadings.length > 0) {
       var totalConsumption = Charts.getTotalConsumption(readings, meter.id);
       html += '<div class="detail-stats">';
@@ -455,7 +464,6 @@ var Views = (function() {
       html += '</div>';
     }
 
-    // Consumption chart
     if (meterReadings.length >= 2) {
       html += '<div class="chart-container" id="detail-chart">';
       html += '<div class="chart-header">';
@@ -468,23 +476,17 @@ var Views = (function() {
       html += '<div class="chart-canvas" id="detail-chart-canvas">';
       var chartData = Charts.getConsumptionData(readings, meter.id, '6m');
       html += Charts.renderBarChart(chartData, meter.unit, Icons.getChartColor(meter.type));
-      html += '</div>';
-      html += '</div>';
+      html += '</div></div>';
 
-      // Meter value line chart
       html += '<div class="chart-container">';
-      html += '<div class="chart-header">';
-      html += '<span class="chart-title">Zählerstandverlauf</span>';
-      html += '</div>';
+      html += '<div class="chart-header"><span class="chart-title">Zählerstandverlauf</span></div>';
       html += '<div class="chart-canvas">';
       html += Charts.renderLineChart(Charts.getConsumptionData(readings, meter.id, '12m'), meter.unit, Icons.getChartColor(meter.type));
-      html += '</div>';
-      html += '</div>';
+      html += '</div></div>';
 
-      // Consumption comparison insight
       var comp = Charts.getConsumptionComparison(readings, meter.id);
       if (comp && comp.count >= 2) {
-        var trendIcon, trendClass;
+        var trendIcon;
         if (comp.trend === 'up') {
           trendIcon = '<div class="insight-icon insight-icon-up">' + Icons.trendUp + '</div>';
         } else if (comp.trend === 'down') {
@@ -507,7 +509,6 @@ var Views = (function() {
       }
     }
 
-    // Section header
     html += '<div class="detail-section-header">';
     html += '<h3 class="detail-section-title">Ablesungen</h3>';
     html += '<button class="detail-add-btn" onclick="App.navigate(\'add-reading\',\'' + meter.id + '\')">+ Neue Ablesung</button>';
@@ -557,13 +558,19 @@ var Views = (function() {
     }
 
     if (readings.length === 0) {
-      var html = '<div class="view-enter">';
-      html += emptyState(Icons.docSmall, 'Keine Ablesungen vorhanden', 'Erfassen Sie Ihre erste Ablesung.', '+ Ablesung erfassen', "App.navigate('add-reading')");
-      html += '</div>';
-      return html;
+      var h = '<div class="view-enter">';
+      h += emptyState(Icons.docSmall, 'Keine Ablesungen vorhanden', 'Erfassen Sie Ihre erste Ablesung.', '+ Ablesung erfassen', "App.navigate('add-reading')");
+      h += '</div>';
+      return h;
     }
 
     var html = '<div class="reading-list view-enter">';
+
+    // View toggle: list vs timeline
+    html += '<div class="chart-period-selector" style="margin-bottom:12px;justify-content:center;display:flex">';
+    html += '<button class="chart-period-btn active" id="reading-view-list" onclick="App.setReadingView(\'list\',this)">Liste</button>';
+    html += '<button class="chart-period-btn" id="reading-view-timeline" onclick="App.setReadingView(\'timeline\',this)">Timeline</button>';
+    html += '</div>';
 
     if (meters.length > 1) {
       html += '<div class="reading-filter">';
@@ -575,8 +582,10 @@ var Views = (function() {
       html += '</select></div>';
     }
 
+    html += '<div id="reading-items-container">';
     html += '<div class="reading-items" id="reading-items">';
     html += renderReadingItems(meters, readings, 'all');
+    html += '</div>';
     html += '</div>';
 
     html += '<button class="fab" onclick="App.navigate(\'add-reading\')" aria-label="Ablesung hinzufügen">' + Icons.plus + '</button>';
@@ -616,6 +625,42 @@ var Views = (function() {
     return html;
   }
 
+  function renderReadingTimeline(meters, readings, filterMeterId) {
+    var filtered = filterMeterId === 'all' ? readings : readings.filter(function(r) { return r.meterId === filterMeterId; });
+    var sorted = filtered.slice().sort(function(a, b) { return new Date(b.date).getTime() - new Date(a.date).getTime(); });
+
+    if (sorted.length === 0) {
+      return '<div class="reading-filter-empty">Keine Ablesungen für diesen Zähler.</div>';
+    }
+
+    var html = '<div class="timeline">';
+    var lastDateStr = '';
+    sorted.forEach(function(reading) {
+      var meter = meters.find(function(m) { return m.id === reading.meterId; });
+      if (!meter) return;
+      var dateStr = Data.formatDate(reading.date);
+      
+      html += '<div class="timeline-item">';
+      html += '<div class="timeline-dot" style="background:' + (Icons.colorMap[meter.type] || 'var(--primary)') + '"></div>';
+      if (dateStr !== lastDateStr) {
+        html += '<div class="timeline-date">' + dateStr + '</div>';
+        lastDateStr = dateStr;
+      }
+      html += '<div class="card timeline-card">';
+      html += '<div class="timeline-card-row">';
+      html += Icons.meterIcon(meter.type);
+      html += '<div class="timeline-card-info">';
+      html += '<div class="timeline-card-meter">' + esc(meter.name) + '</div>';
+      if (reading.note) html += '<div class="timeline-card-note">' + esc(reading.note) + '</div>';
+      html += '</div>';
+      html += '<div><span class="timeline-card-value">' + Data.formatNumber(reading.value) + '</span> <span class="timeline-card-unit">' + esc(meter.unit) + '</span></div>';
+      html += '</div></div>';
+      html += '</div>';
+    });
+    html += '</div>';
+    return html;
+  }
+
   function readingForm(meters, preselectedMeterId, readings) {
     var meterId = preselectedMeterId || (meters.length === 1 ? meters[0].id : '');
     var today = new Date().toISOString().split('T')[0];
@@ -634,7 +679,6 @@ var Views = (function() {
     html += '<span class="form-error" id="rf-meter-err"></span>';
     html += '</div>';
 
-    // Show last reading hint
     if (selectedMeter && readings) {
       var lastReading = getLastReading(readings, selectedMeter.id);
       if (lastReading) {
@@ -647,10 +691,12 @@ var Views = (function() {
 
     html += '<div class="form-group">';
     html += '<label class="form-label" id="rf-value-label">Zählerstand' + (selectedMeter ? ' (' + esc(selectedMeter.unit) + ')' : '') + ' *</label>';
-    html += '<input class="form-input form-input-large" type="text" inputmode="decimal" id="rf-value" placeholder="z.B. 12345,67" autocomplete="off"' + (meterId ? ' autofocus' : '') + ' />';
+    html += '<input class="form-input form-input-large" type="text" inputmode="decimal" id="rf-value" placeholder="z.B. 12345,67" autocomplete="off"' + (meterId ? ' autofocus' : '') + ' oninput="App.checkReadingPlausibility()" />';
     html += '<span class="form-error" id="rf-value-err"></span>';
     html += '<span class="form-hint" id="rf-value-hint">' + (selectedMeter ? 'Geben Sie den aktuellen Zählerstand in ' + esc(selectedMeter.unit) + ' ein' : '') + '</span>';
     html += '</div>';
+
+    html += '<div id="rf-plausibility-container"></div>';
 
     html += '<div class="form-group">';
     html += '<label class="form-label">Ablesedatum *</label>';
@@ -756,6 +802,250 @@ var Views = (function() {
     return html;
   }
 
+  function reportView(meters, readings, categories, costRates, reportYear, reportMonth) {
+    var now = new Date();
+    var year = reportYear || now.getFullYear();
+
+    var html = '<div class="report-view view-enter">';
+
+    html += '<div class="card report-header-card">';
+    html += '<h2 class="report-title">Verbrauchsbericht</h2>';
+    html += '<p class="report-subtitle">' + (reportMonth !== undefined && reportMonth !== null ? Data.getMonthName(reportMonth) + ' ' : '') + year + '</p>';
+    html += '<div class="report-period-selector">';
+    html += '<button class="report-period-btn' + (reportMonth === undefined || reportMonth === null ? ' active' : '') + '" onclick="App.setReportPeriod(' + year + ',null)">Ganzes Jahr</button>';
+    for (var m = 0; m < 12; m++) {
+      var isActive = reportMonth === m;
+      html += '<button class="report-period-btn' + (isActive ? ' active' : '') + '" onclick="App.setReportPeriod(' + year + ',' + m + ')">' + Data.getMonthShort(m) + '</button>';
+    }
+    html += '</div>';
+
+    // Year navigation
+    html += '<div style="display:flex;align-items:center;justify-content:center;gap:16px;margin-top:12px">';
+    html += '<button class="chart-period-btn" onclick="App.setReportPeriod(' + (year - 1) + ',' + (reportMonth !== undefined && reportMonth !== null ? reportMonth : 'null') + ')">← ' + (year - 1) + '</button>';
+    html += '<span style="font-weight:700">' + year + '</span>';
+    if (year < now.getFullYear()) {
+      html += '<button class="chart-period-btn" onclick="App.setReportPeriod(' + (year + 1) + ',' + (reportMonth !== undefined && reportMonth !== null ? reportMonth : 'null') + ')">' + (year + 1) + ' →</button>';
+    }
+    html += '</div>';
+    html += '</div>';
+
+    var report = Data.generateReportData(meters, readings, year, reportMonth);
+
+    // Summary
+    var totalConsumptionCount = Object.keys(report.totalConsumption).length;
+    html += '<div class="report-summary-grid">';
+    html += '<div class="card report-summary-item"><div class="report-summary-value">' + report.readingCount + '</div><div class="report-summary-label">Ablesungen</div></div>';
+    html += '<div class="card report-summary-item"><div class="report-summary-value">' + report.meters.length + '</div><div class="report-summary-label">Zähler aktiv</div></div>';
+    html += '<div class="card report-summary-item"><div class="report-summary-value">' + totalConsumptionCount + '</div><div class="report-summary-label">Verbrauchsarten</div></div>';
+    html += '</div>';
+
+    // Consumption by type
+    if (totalConsumptionCount > 0) {
+      Object.keys(report.totalConsumption).forEach(function(type) {
+        var tc = report.totalConsumption[type];
+        var rate = (costRates && costRates[type]) || Data.defaultCostRates[type] || 0;
+        var cost = tc.value * rate;
+
+        html += '<div class="card insight-card">';
+        html += Icons.meterIcon(type);
+        html += '<div class="insight-content">';
+        html += '<div class="insight-title">' + esc(type) + '</div>';
+        html += '<div class="insight-desc">' + Data.formatNumber(tc.value) + ' ' + esc(tc.unit) + (rate > 0 ? ' · ' + Data.formatCurrency(cost) : '') + '</div>';
+        html += '</div>';
+        html += '</div>';
+      });
+    }
+
+    // Per meter breakdown
+    if (report.meters.length > 0) {
+      html += '<h3 class="section-title" style="margin-top:8px">Zähler-Details</h3>';
+      html += '<div class="report-meter-section">';
+      report.meters.forEach(function(rm) {
+        html += '<div class="card report-meter-card">';
+        html += '<div class="report-meter-header">';
+        html += Icons.meterIcon(rm.meter.type);
+        html += '<div>';
+        html += '<div class="report-meter-name">' + esc(rm.meter.name) + '</div>';
+        html += '<div class="report-meter-type">Nr. ' + esc(rm.meter.number) + '</div>';
+        html += '</div></div>';
+        html += '<div class="report-meter-stats">';
+        html += '<div class="report-meter-stat"><div class="report-meter-stat-value">' + Data.formatNumber(rm.consumption) + ' ' + esc(rm.meter.unit) + '</div><div class="report-meter-stat-label">Verbrauch</div></div>';
+        html += '<div class="report-meter-stat"><div class="report-meter-stat-value">' + rm.readingCount + '</div><div class="report-meter-stat-label">Ablesungen</div></div>';
+        if (rm.firstValue !== null) {
+          html += '<div class="report-meter-stat"><div class="report-meter-stat-value">' + Data.formatNumber(rm.firstValue) + '</div><div class="report-meter-stat-label">Anfangsstand</div></div>';
+        }
+        if (rm.lastValue !== null) {
+          html += '<div class="report-meter-stat"><div class="report-meter-stat-value">' + Data.formatNumber(rm.lastValue) + '</div><div class="report-meter-stat-label">Endstand</div></div>';
+        }
+        html += '</div></div>';
+      });
+      html += '</div>';
+    }
+
+    // Print button
+    html += '<button class="report-print-btn" onclick="window.print()">' + Icons.printer + ' Bericht drucken</button>';
+
+    html += '</div>';
+    return html;
+  }
+
+  function comparisonView(meters, readings, selectedMeterIds) {
+    var html = '<div class="comparison-view view-enter">';
+
+    html += '<div class="card" style="padding:16px">';
+    html += '<h3 class="section-title" style="margin-bottom:8px">Zähler vergleichen</h3>';
+    html += '<p style="font-size:13px;color:var(--text-secondary);margin:0 0 12px">Wählen Sie Zähler zum Vergleichen aus.</p>';
+    html += '<div class="comparison-meter-chips">';
+    var colors = ['var(--chart-color-1)','var(--chart-color-2)','var(--chart-color-3)','var(--chart-color-4)','var(--chart-color-5)'];
+    meters.forEach(function(m, idx) {
+      var isActive = selectedMeterIds && selectedMeterIds.indexOf(m.id) !== -1;
+      var colorIdx = isActive ? selectedMeterIds.indexOf(m.id) : idx;
+      html += '<button class="comparison-chip' + (isActive ? ' active' : '') + '" onclick="App.toggleComparisonMeter(\'' + m.id + '\')">';
+      if (isActive) html += '<span class="comparison-chip-dot" style="background:' + colors[colorIdx % colors.length] + '"></span>';
+      html += esc(m.name);
+      html += '</button>';
+    });
+    html += '</div></div>';
+
+    if (selectedMeterIds && selectedMeterIds.length >= 2) {
+      // Build comparison chart data
+      var dataSets = [];
+      selectedMeterIds.forEach(function(id, idx) {
+        var meter = meters.find(function(mm) { return mm.id === id; });
+        if (!meter) return;
+        var data = Charts.getConsumptionData(readings, id, '12m');
+        dataSets.push({
+          name: meter.name,
+          data: data,
+          color: Icons.getChartColor(meter.type)
+        });
+      });
+
+      html += '<div class="chart-container">';
+      html += '<div class="chart-header"><span class="chart-title">Verbrauchsvergleich</span></div>';
+      html += '<div class="chart-canvas">';
+      html += Charts.renderComparisonChart(dataSets, '');
+      html += '</div></div>';
+
+      // Comparison table
+      html += '<div class="card" style="padding:16px;overflow-x:auto">';
+      html += '<table class="comparison-table"><thead><tr><th>Zähler</th><th>Letzter Stand</th><th>Gesamt</th><th>Ø Verbrauch</th></tr></thead><tbody>';
+      selectedMeterIds.forEach(function(id) {
+        var meter = meters.find(function(mm) { return mm.id === id; });
+        if (!meter) return;
+        var totalC = Charts.getTotalConsumption(readings, meter.id);
+        var comp = Charts.getConsumptionComparison(readings, meter.id);
+        var lastR = getLastReading(readings, meter.id);
+        html += '<tr>';
+        html += '<td style="font-weight:600">' + esc(meter.name) + '</td>';
+        html += '<td>' + (lastR ? Data.formatNumber(lastR.value) + ' ' + esc(meter.unit) : '–') + '</td>';
+        html += '<td>' + Data.formatNumber(totalC) + ' ' + esc(meter.unit) + '</td>';
+        html += '<td>' + (comp ? Data.formatNumber(comp.average) : '–') + ' ' + esc(meter.unit) + '</td>';
+        html += '</tr>';
+      });
+      html += '</tbody></table></div>';
+    } else if (selectedMeterIds && selectedMeterIds.length === 1) {
+      html += '<div class="reading-filter-empty">Wählen Sie mindestens 2 Zähler zum Vergleichen.</div>';
+    } else {
+      html += '<div class="reading-filter-empty">Wählen Sie Zähler oben aus, um den Verbrauch zu vergleichen.</div>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  function settingsView(currentTheme, reminderInterval) {
+    var html = '<div class="settings-view view-enter">';
+
+    // About
+    html += '<div class="card about-card">';
+    html += '<div class="about-logo"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div>';
+    html += '<h3 class="about-name">Zählerstand Manager</h3>';
+    html += '<p class="about-version">Version 3.0</p>';
+    html += '<p class="about-credits">Made with ♥ for smart metering</p>';
+    html += '</div>';
+
+    // Appearance
+    html += '<div class="settings-section">';
+    html += '<div class="settings-section-title">Darstellung</div>';
+    html += '<div class="card settings-item" style="cursor:default;flex-direction:column;align-items:stretch;gap:12px">';
+    html += '<div style="display:flex;align-items:center;gap:14px">';
+    html += '<div class="settings-item-icon" style="background:var(--primary-light);color:var(--primary)">' + Icons.palette + '</div>';
+    html += '<div class="settings-item-content">';
+    html += '<div class="settings-item-title">Design</div>';
+    html += '<div class="settings-item-desc">Wählen Sie das Farbschema</div>';
+    html += '</div></div>';
+    html += '<div class="theme-selector">';
+    html += '<button class="theme-option' + (currentTheme === 'light' ? ' active' : '') + '" onclick="App.changeTheme(\'light\')">' + Icons.sun + ' Hell</button>';
+    html += '<button class="theme-option' + (currentTheme === 'auto' ? ' active' : '') + '" onclick="App.changeTheme(\'auto\')">' + Icons.monitor + ' Auto</button>';
+    html += '<button class="theme-option' + (currentTheme === 'dark' ? ' active' : '') + '" onclick="App.changeTheme(\'dark\')">' + Icons.moon + ' Dunkel</button>';
+    html += '</div></div>';
+    html += '</div>';
+
+    // Reminders
+    html += '<div class="settings-section">';
+    html += '<div class="settings-section-title">Erinnerungen</div>';
+    html += '<div class="card settings-item" style="cursor:default">';
+    html += '<div class="settings-item-icon" style="background:var(--warning-light);color:var(--warning)">' + Icons.bell + '</div>';
+    html += '<div class="settings-item-content">';
+    html += '<div class="settings-item-title">Ableseintervall</div>';
+    html += '<div class="settings-item-desc">Erinnerung nach X Tagen ohne Ablesung</div>';
+    html += '</div>';
+    html += '<div class="settings-item-right">';
+    html += '<select class="form-input form-select" style="width:auto;padding:8px 12px;font-size:14px" id="settings-reminder" onchange="App.changeReminderInterval(this.value)">';
+    [7, 14, 30, 60, 90].forEach(function(d) {
+      html += '<option value="' + d + '"' + (reminderInterval === d ? ' selected' : '') + '>' + d + ' Tage</option>';
+    });
+    html += '</select>';
+    html += '</div></div>';
+    html += '</div>';
+
+    // Tools
+    html += '<div class="settings-section">';
+    html += '<div class="settings-section-title">Werkzeuge</div>';
+
+    html += '<button class="card card-clickable settings-item" onclick="App.navigate(\'report\')">';
+    html += '<div class="settings-item-icon" style="background:var(--primary-light);color:var(--primary)">' + Icons.pieChart + '</div>';
+    html += '<div class="settings-item-content">';
+    html += '<div class="settings-item-title">Verbrauchsbericht</div>';
+    html += '<div class="settings-item-desc">Monatliche und jährliche Berichte</div>';
+    html += '</div>';
+    html += '<span class="settings-item-chevron">' + Icons.chevronRight + '</span>';
+    html += '</button>';
+
+    html += '<button class="card card-clickable settings-item" onclick="App.navigate(\'comparison\')">';
+    html += '<div class="settings-item-icon" style="background:var(--success-light);color:var(--success)">' + Icons.layers + '</div>';
+    html += '<div class="settings-item-content">';
+    html += '<div class="settings-item-title">Zähler vergleichen</div>';
+    html += '<div class="settings-item-desc">Verbrauchsdaten nebeneinander</div>';
+    html += '</div>';
+    html += '<span class="settings-item-chevron">' + Icons.chevronRight + '</span>';
+    html += '</button>';
+
+    html += '<button class="card card-clickable settings-item" onclick="App.navigate(\'export\')">';
+    html += '<div class="settings-item-icon" style="background:var(--primary-light);color:var(--primary)">' + Icons.shield + '</div>';
+    html += '<div class="settings-item-content">';
+    html += '<div class="settings-item-title">Export & Backup</div>';
+    html += '<div class="settings-item-desc">CSV-Export und Datensicherung</div>';
+    html += '</div>';
+    html += '<span class="settings-item-chevron">' + Icons.chevronRight + '</span>';
+    html += '</button>';
+
+    html += '</div>';
+
+    // Danger zone
+    html += '<div class="settings-section">';
+    html += '<div class="settings-section-title">Gefahrenzone</div>';
+    html += '<div class="card danger-zone">';
+    html += '<div class="danger-zone-title">Alle Daten löschen</div>';
+    html += '<div class="danger-zone-desc">Löscht alle Zähler, Ablesungen und Kategorien unwiderruflich. Einstellungen bleiben erhalten.</div>';
+    html += '<button class="danger-zone-btn" onclick="App.confirmClearAllData()">' + Icons.trashBig + ' Alle Daten löschen</button>';
+    html += '</div></div>';
+
+    html += '</div>';
+    return html;
+  }
+
   function exportView(meters, readings, categories) {
     var types = ['Strom', 'Kaltwasser', 'Warmwasser', 'Betriebsstunden', 'Wärme'];
     var availableTypes = types.filter(function(t) { return meters.some(function(m) { return m.type === t; }); });
@@ -850,7 +1140,6 @@ var Views = (function() {
     return html;
   }
 
-  // Cost settings bottom sheet
   function costSettingsSheet(costRates, meterTypes) {
     var html = '<div class="cost-form-overlay" id="cost-form-overlay" onclick="if(event.target===this)App.hideCostSettings()">';
     html += '<div class="cost-form-sheet" onclick="event.stopPropagation()">';
@@ -917,6 +1206,10 @@ var Views = (function() {
     exportView: exportView,
     costSettingsSheet: costSettingsSheet,
     renderReadingItems: renderReadingItems,
+    renderReadingTimeline: renderReadingTimeline,
+    reportView: reportView,
+    comparisonView: comparisonView,
+    settingsView: settingsView,
     esc: esc
   };
 })();

@@ -6,7 +6,6 @@
 var Storage = (function() {
   var memStore = {};
 
-  // Detect which storage is available
   var usePS = typeof window !== 'undefined' && window.persistentStorage && typeof window.persistentStorage.getItem === 'function';
   var useLS = false;
   if (!usePS) {

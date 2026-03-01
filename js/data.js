@@ -39,6 +39,16 @@ var Data = (function() {
     return num.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
   }
 
+  function getMonthName(monthIdx) {
+    var names = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
+    return names[monthIdx] || '';
+  }
+
+  function getMonthShort(monthIdx) {
+    var names = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
+    return names[monthIdx] || '';
+  }
+
   // ===== SETTINGS =====
   async function getSettings() {
     var data = await Storage.getItem(SETTINGS_KEY);
@@ -59,6 +69,28 @@ var Data = (function() {
     var settings = await getSettings();
     if (!settings.costRates) settings.costRates = {};
     settings.costRates[meterType] = rate;
+    await saveSettings(settings);
+  }
+
+  async function getTheme() {
+    var settings = await getSettings();
+    return settings.theme || 'auto';
+  }
+
+  async function setTheme(theme) {
+    var settings = await getSettings();
+    settings.theme = theme;
+    await saveSettings(settings);
+  }
+
+  async function getReminderInterval() {
+    var settings = await getSettings();
+    return settings.reminderInterval || 30;
+  }
+
+  async function setReminderInterval(days) {
+    var settings = await getSettings();
+    settings.reminderInterval = days;
     await saveSettings(settings);
   }
 
@@ -218,6 +250,141 @@ var Data = (function() {
     await saveReadings(readings);
   }
 
+  // ===== PLAUSIBILITY CHECK =====
+  function checkPlausibility(meters, readings, meterId, newValue, newDate) {
+    var meter = meters.find(function(m) { return m.id === meterId; });
+    if (!meter) return null;
+
+    var meterReadings = readings.filter(function(r) { return r.meterId === meterId; })
+      .sort(function(a, b) { return new Date(a.date).getTime() - new Date(b.date).getTime(); });
+    
+    if (meterReadings.length === 0) return null;
+
+    var warnings = [];
+    var lastReading = meterReadings[meterReadings.length - 1];
+
+    // Check if value is lower than last reading (unlikely for most meters)
+    if (newValue < lastReading.value) {
+      warnings.push('Der neue Wert (' + formatNumber(newValue) + ') ist niedriger als der letzte Stand (' + formatNumber(lastReading.value) + '). Bitte überprüfen Sie die Eingabe.');
+    }
+
+    // Check if consumption is extremely high (>10x average)
+    if (meterReadings.length >= 2 && newValue > lastReading.value) {
+      var consumptions = [];
+      for (var i = 1; i < meterReadings.length; i++) {
+        consumptions.push(meterReadings[i].value - meterReadings[i-1].value);
+      }
+      var avgConsumption = consumptions.reduce(function(a,b){return a+b;}, 0) / consumptions.length;
+      var newConsumption = newValue - lastReading.value;
+      
+      if (avgConsumption > 0 && newConsumption > avgConsumption * 10) {
+        warnings.push('Der Verbrauch (' + formatNumber(newConsumption) + ' ' + meter.unit + ') ist ungewöhnlich hoch – mehr als 10x des Durchschnitts (' + formatNumber(avgConsumption) + ' ' + meter.unit + ').');
+      }
+    }
+
+    // Check for duplicate date
+    var hasSameDate = meterReadings.some(function(r) { return r.date === newDate; });
+    if (hasSameDate) {
+      warnings.push('Für dieses Datum existiert bereits eine Ablesung.');
+    }
+
+    return warnings.length > 0 ? warnings : null;
+  }
+
+  // ===== READING REMINDERS =====
+  function getOverdueMeters(meters, readings, intervalDays) {
+    var now = new Date();
+    var overdue = [];
+    
+    meters.forEach(function(meter) {
+      var meterReadings = readings.filter(function(r) { return r.meterId === meter.id; });
+      if (meterReadings.length === 0) {
+        // Never read -> overdue
+        overdue.push({ meter: meter, daysSince: null, lastDate: null });
+        return;
+      }
+      
+      var lastReading = meterReadings.sort(function(a,b) {
+        return new Date(b.date).getTime() - new Date(a.date).getTime();
+      })[0];
+      
+      var lastDate = new Date(lastReading.date);
+      var daysSince = Math.floor((now.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24));
+      
+      if (daysSince >= intervalDays) {
+        overdue.push({ meter: meter, daysSince: daysSince, lastDate: lastReading.date });
+      }
+    });
+    
+    return overdue;
+  }
+
+  // ===== REPORT DATA =====
+  function generateReportData(meters, readings, year, month) {
+    var report = {
+      totalConsumption: {},
+      totalCost: 0,
+      meters: [],
+      readingCount: 0
+    };
+
+    meters.forEach(function(meter) {
+      var meterReadings = readings.filter(function(r) {
+        if (r.meterId !== meter.id) return false;
+        var d = new Date(r.date);
+        if (month !== undefined && month !== null) {
+          return d.getFullYear() === year && d.getMonth() === month;
+        }
+        return d.getFullYear() === year;
+      }).sort(function(a,b) { return new Date(a.date).getTime() - new Date(b.date).getTime(); });
+
+      // Get readings for consumption calculation (need before/after period too)
+      var allMeterReadings = readings.filter(function(r) { return r.meterId === meter.id; })
+        .sort(function(a,b) { return new Date(a.date).getTime() - new Date(b.date).getTime(); });
+
+      var consumption = 0;
+      var firstValue = null;
+      var lastValue = null;
+
+      if (meterReadings.length >= 2) {
+        firstValue = meterReadings[0].value;
+        lastValue = meterReadings[meterReadings.length - 1].value;
+        consumption = lastValue - firstValue;
+      } else if (meterReadings.length === 1) {
+        // Find previous reading before this period
+        var periodStart = new Date(year, month !== undefined && month !== null ? month : 0, 1);
+        var prevReadings = allMeterReadings.filter(function(r) {
+          return new Date(r.date).getTime() < periodStart.getTime();
+        });
+        if (prevReadings.length > 0) {
+          firstValue = prevReadings[prevReadings.length - 1].value;
+          lastValue = meterReadings[0].value;
+          consumption = lastValue - firstValue;
+        }
+      }
+
+      report.readingCount += meterReadings.length;
+
+      if (consumption > 0 || meterReadings.length > 0) {
+        if (!report.totalConsumption[meter.type]) {
+          report.totalConsumption[meter.type] = { value: 0, unit: meter.unit };
+        }
+        report.totalConsumption[meter.type].value += consumption;
+
+        report.meters.push({
+          meter: meter,
+          consumption: consumption,
+          readingCount: meterReadings.length,
+          firstValue: firstValue,
+          lastValue: lastValue,
+          readings: meterReadings
+        });
+      }
+    });
+
+    return report;
+  }
+
   // CSV Export
   function escapeCSV(val) {
     if (val.indexOf('"') !== -1 || val.indexOf(';') !== -1 || val.indexOf('\n') !== -1) {
@@ -256,7 +423,7 @@ var Data = (function() {
 
   function generateBackupJSON(meters, readings, categories) {
     var backup = {
-      appVersion: '2.0',
+      appVersion: '3.0',
       exportDate: new Date().toISOString(),
       categories: categories || [],
       meters: meters,
@@ -375,6 +542,13 @@ var Data = (function() {
     return { newMeters: newMeters, newReadings: newReadings, newCategories: newCategories };
   }
 
+  async function clearAllData() {
+    await saveMeters([]);
+    await saveReadings([]);
+    await saveCategories([]);
+    // Keep settings
+  }
+
   function downloadFile(content, filename, mimeType) {
     var blob = new Blob([content], { type: mimeType });
     var url = URL.createObjectURL(blob);
@@ -417,10 +591,16 @@ var Data = (function() {
     formatDateTime: formatDateTime,
     formatNumber: formatNumber,
     formatCurrency: formatCurrency,
+    getMonthName: getMonthName,
+    getMonthShort: getMonthShort,
     getSettings: getSettings,
     saveSettings: saveSettings,
     getCostRates: getCostRates,
     saveCostRate: saveCostRate,
+    getTheme: getTheme,
+    setTheme: setTheme,
+    getReminderInterval: getReminderInterval,
+    setReminderInterval: setReminderInterval,
     getCategories: getCategories,
     saveCategories: saveCategories,
     addCategory: addCategory,
@@ -438,11 +618,15 @@ var Data = (function() {
     saveReadings: saveReadings,
     addReading: addReading,
     deleteReading: deleteReading,
+    checkPlausibility: checkPlausibility,
+    getOverdueMeters: getOverdueMeters,
+    generateReportData: generateReportData,
     generateCSV: generateCSV,
     generateBackupJSON: generateBackupJSON,
     validateBackup: validateBackup,
     importReplace: importReplace,
     importMerge: importMerge,
+    clearAllData: clearAllData,
     downloadFile: downloadFile,
     unitSuggestions: unitSuggestions,
     defaultCostRates: defaultCostRates,

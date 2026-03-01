@@ -32,30 +32,8 @@ var Charts = (function() {
     } else if (period === '12m') {
       data = data.slice(-12);
     }
-    // 'all' returns everything
 
     return data;
-  }
-
-  function getMultiMeterConsumption(meters, readings, type, period) {
-    var filteredMeters = type ? meters.filter(function(m) { return m.type === type; }) : meters;
-    var allData = {};
-
-    filteredMeters.forEach(function(meter) {
-      var data = getConsumptionData(readings, meter.id, period);
-      data.forEach(function(d) {
-        var key = d.label;
-        if (!allData[key]) {
-          allData[key] = { label: key, date: d.date, total: 0, meters: {} };
-        }
-        allData[key].total += d.value;
-        allData[key].meters[meter.id] = d.value;
-      });
-    });
-
-    return Object.values(allData).sort(function(a, b) {
-      return a.date.getTime() - b.date.getTime();
-    });
   }
 
   function formatPeriodLabel(date, period) {
@@ -85,14 +63,12 @@ var Charts = (function() {
 
     var svg = '<svg class="chart-svg" viewBox="0 0 ' + width + ' ' + height + '" preserveAspectRatio="xMidYMid meet">';
 
-    // Grid lines
     var gridLines = 4;
     for (var g = 0; g <= gridLines; g++) {
       var gy = padding.top + (chartH / gridLines) * g;
       svg += '<line class="chart-grid-line" x1="' + padding.left + '" y1="' + gy + '" x2="' + (width - padding.right) + '" y2="' + gy + '"/>';
     }
 
-    // Bars
     data.forEach(function(d, i) {
       var barH = (Math.abs(d.value) / maxVal) * chartH;
       var x = startX + i * (barWidth + barGap);
@@ -101,12 +77,10 @@ var Charts = (function() {
       svg += '<g class="chart-bar-group">';
       svg += '<rect class="chart-bar" x="' + x + '" y="' + y + '" width="' + barWidth + '" height="' + barH + '" fill="' + (color || 'var(--chart-color-1)') + '" rx="4" ry="4"/>';
       
-      // Value label on top
       if (barH > 20 && barCount <= 12) {
         svg += '<text class="chart-value-label" x="' + (x + barWidth / 2) + '" y="' + (y - 6) + '" text-anchor="middle">' + formatChartValue(d.value) + '</text>';
       }
       
-      // X-axis label
       svg += '<text class="chart-label" x="' + (x + barWidth / 2) + '" y="' + (height - 8) + '" text-anchor="middle">' + d.label + '</text>';
       svg += '</g>';
     });
@@ -143,31 +117,26 @@ var Charts = (function() {
 
     var svg = '<svg class="chart-svg" viewBox="0 0 ' + width + ' ' + height + '" preserveAspectRatio="xMidYMid meet">';
 
-    // Grid lines
     var gridLines = 4;
     for (var g = 0; g <= gridLines; g++) {
       var gy = padding.top + (chartH / gridLines) * g;
       svg += '<line class="chart-grid-line" x1="' + padding.left + '" y1="' + gy + '" x2="' + (width - padding.right) + '" y2="' + gy + '"/>';
     }
 
-    // Area fill
     var areaPath = 'M' + points[0].x + ',' + (padding.top + chartH);
     points.forEach(function(p) { areaPath += ' L' + p.x + ',' + p.y; });
     areaPath += ' L' + points[points.length - 1].x + ',' + (padding.top + chartH) + ' Z';
     svg += '<path class="chart-area" d="' + areaPath + '" fill="' + lineColor + '"/>';
 
-    // Line
     var linePath = 'M' + points[0].x + ',' + points[0].y;
     for (var i = 1; i < points.length; i++) {
       linePath += ' L' + points[i].x + ',' + points[i].y;
     }
     svg += '<path class="chart-line" d="' + linePath + '" stroke="' + lineColor + '"/>';
 
-    // Dots and labels
     points.forEach(function(p, i) {
       svg += '<circle class="chart-dot" cx="' + p.x + '" cy="' + p.y + '" r="4" fill="' + lineColor + '" stroke="var(--surface)" stroke-width="2"/>';
       
-      // X label
       if (data.length <= 12 || i % Math.ceil(data.length / 8) === 0) {
         svg += '<text class="chart-label" x="' + p.x + '" y="' + (height - 8) + '" text-anchor="middle">' + p.data.label + '</text>';
       }
@@ -177,7 +146,88 @@ var Charts = (function() {
     return svg;
   }
 
-  // Sparkline – tiny inline chart
+  // Multi-line comparison chart
+  function renderComparisonChart(meterDataSets, unit) {
+    if (!meterDataSets || meterDataSets.length === 0) {
+      return '<div class="chart-empty"><span>Keine Daten zum Vergleichen</span></div>';
+    }
+
+    var width = 540;
+    var height = 220;
+    var padding = { top: 20, right: 20, bottom: 50, left: 20 };
+    var chartW = width - padding.left - padding.right;
+    var chartH = height - padding.top - padding.bottom;
+
+    // Find global min/max
+    var allValues = [];
+    meterDataSets.forEach(function(ds) {
+      ds.data.forEach(function(d) { allValues.push(d.value); });
+    });
+    if (allValues.length === 0) return '<div class="chart-empty"><span>Keine Daten</span></div>';
+
+    var minVal = Math.min.apply(null, allValues);
+    var maxVal = Math.max.apply(null, allValues);
+    var range = maxVal - minVal;
+    if (range === 0) range = 1;
+    // Add padding
+    minVal = Math.max(0, minVal - range * 0.1);
+    maxVal = maxVal + range * 0.1;
+    range = maxVal - minVal;
+
+    var svg = '<svg class="chart-svg" viewBox="0 0 ' + width + ' ' + height + '" preserveAspectRatio="xMidYMid meet">';
+
+    var gridLines = 4;
+    for (var g = 0; g <= gridLines; g++) {
+      var gy = padding.top + (chartH / gridLines) * g;
+      svg += '<line class="chart-grid-line" x1="' + padding.left + '" y1="' + gy + '" x2="' + (width - padding.right) + '" y2="' + gy + '"/>';
+    }
+
+    var colors = ['var(--chart-color-1)','var(--chart-color-2)','var(--chart-color-3)','var(--chart-color-4)','var(--chart-color-5)'];
+
+    meterDataSets.forEach(function(ds, dsIdx) {
+      if (ds.data.length < 2) return;
+      var color = ds.color || colors[dsIdx % colors.length];
+
+      var points = ds.data.map(function(d, i) {
+        var x = padding.left + (i / (ds.data.length - 1)) * chartW;
+        var y = padding.top + chartH - (d.value - minVal) / range * chartH;
+        return { x: x, y: y, data: d };
+      });
+
+      var linePath = 'M' + points[0].x + ',' + points[0].y;
+      for (var i = 1; i < points.length; i++) {
+        linePath += ' L' + points[i].x + ',' + points[i].y;
+      }
+      svg += '<path class="chart-line" d="' + linePath + '" stroke="' + color + '" style="opacity:0.8"/>';
+
+      points.forEach(function(p) {
+        svg += '<circle class="chart-dot" cx="' + p.x + '" cy="' + p.y + '" r="3.5" fill="' + color + '" stroke="var(--surface)" stroke-width="2"/>';
+      });
+
+      // Labels for first dataset only
+      if (dsIdx === 0) {
+        points.forEach(function(p, i) {
+          if (ds.data.length <= 12 || i % Math.ceil(ds.data.length / 8) === 0) {
+            svg += '<text class="chart-label" x="' + p.x + '" y="' + (height - 8) + '" text-anchor="middle">' + p.data.label + '</text>';
+          }
+        });
+      }
+    });
+
+    svg += '</svg>';
+
+    // Legend
+    svg += '<div class="chart-legend">';
+    meterDataSets.forEach(function(ds, i) {
+      var c = ds.color || colors[i % colors.length];
+      svg += '<div class="chart-legend-item"><div class="chart-legend-dot" style="background:' + c + '"></div>' + escHtml(ds.name) + '</div>';
+    });
+    svg += '</div>';
+
+    return svg;
+  }
+
+  // Sparkline
   function renderSparkline(readings, meterId, width, height) {
     width = width || 60;
     height = height || 24;
@@ -206,7 +256,6 @@ var Charts = (function() {
     return '<span class="sparkline-container"><svg class="sparkline" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + ' ' + height + '"><polyline points="' + points.join(' ') + '" fill="none" stroke="' + color + '" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>';
   }
 
-  // Consumption comparison
   function getConsumptionComparison(readings, meterId) {
     var meterReadings = readings.filter(function(r) { return r.meterId === meterId; })
       .sort(function(a, b) { return new Date(a.date).getTime() - new Date(b.date).getTime(); });
@@ -223,7 +272,6 @@ var Charts = (function() {
     var avgConsumption = consumptions.reduce(function(a, b) { return a + b; }, 0) / consumptions.length;
 
     var changePercent = prevConsumption !== 0 ? ((lastConsumption - prevConsumption) / Math.abs(prevConsumption)) * 100 : 0;
-    var vsAvgPercent = avgConsumption !== 0 ? ((lastConsumption - avgConsumption) / Math.abs(avgConsumption)) * 100 : 0;
 
     return {
       last: lastConsumption,
@@ -231,13 +279,11 @@ var Charts = (function() {
       average: avgConsumption,
       total: consumptions.reduce(function(a, b) { return a + b; }, 0),
       changePct: changePercent,
-      vsAvgPct: vsAvgPercent,
       trend: lastConsumption > prevConsumption ? 'up' : (lastConsumption < prevConsumption ? 'down' : 'neutral'),
       count: consumptions.length
     };
   }
 
-  // Get total consumption for a meter
   function getTotalConsumption(readings, meterId) {
     var meterReadings = readings.filter(function(r) { return r.meterId === meterId; })
       .sort(function(a, b) { return new Date(a.date).getTime() - new Date(b.date).getTime(); });
@@ -256,11 +302,16 @@ var Charts = (function() {
     return val.toFixed(1);
   }
 
+  function escHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
   return {
     getConsumptionData: getConsumptionData,
-    getMultiMeterConsumption: getMultiMeterConsumption,
     renderBarChart: renderBarChart,
     renderLineChart: renderLineChart,
+    renderComparisonChart: renderComparisonChart,
     renderSparkline: renderSparkline,
     getConsumptionComparison: getConsumptionComparison,
     getTotalConsumption: getTotalConsumption
